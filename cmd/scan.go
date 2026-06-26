@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"strings"
+	"time"
 
 	"github.com/Zyrexnn/serahkan-cli/internal/ai"
 	"github.com/Zyrexnn/serahkan-cli/internal/parser"
@@ -12,7 +14,6 @@ import (
 
 var scanOptions struct {
 	target   string
-	model    string
 	severity string
 }
 
@@ -21,21 +22,22 @@ var scanCmd = &cobra.Command{
 	Short: "Run a Nuclei scan against a target",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		out := cmd.OutOrStdout()
+		allowedSeverities := parseSeverityFlag(scanOptions.severity)
 
-		rawOutput, err := runner.RunNuclei(cmd.Context(), scanOptions.target)
+		fmt.Fprintf(out, " [SCAN] Running automated vulnerability scanning on %s...\n", scanOptions.target)
+		stopTicker := startScanTicker(out, scanOptions.target)
+		findings, err := runner.RunNuclei(cmd.Context(), scanOptions.target, allowedSeverities)
+		stopTicker()
 		if err != nil {
 			return fmt.Errorf("scan failed: %w", err)
 		}
 
-		allowedSeverities := parseSeverityFlag(scanOptions.severity)
-
-		findings, err := parser.ParseAndFilter(rawOutput, allowedSeverities)
-		if err != nil {
-			return fmt.Errorf("failed to parse nuclei output: %w", err)
-		}
+		fmt.Fprintln(out, " [PARSER] Log filtering completed. Analyzing severity payload...")
 
 		if len(findings) == 0 {
-			fmt.Fprintf(out, "No vulnerabilities matching severity levels [%s] were detected.\n", strings.Join(allowedSeverities, ", "))
+			fmt.Fprintln(out)
+			fmt.Fprintf(out, "[SUCCESS] Scan complete. No vulnerabilities matching severity levels [%s] detected on %s.\n", strings.Join(allowedSeverities, ", "), scanOptions.target)
+			fmt.Fprintln(out)
 			return nil
 		}
 
@@ -44,16 +46,18 @@ var scanCmd = &cobra.Command{
 			return fmt.Errorf("failed to format findings summary: %w", err)
 		}
 
-		analysis, err := ai.SendToLocalAI(summary, scanOptions.model)
+		fmt.Fprintln(out, " [AI] Local LLM is generating defensive analysis and remediation code...")
+		analysis, err := ai.SendToLocalAI(summary)
 		if err != nil {
 			return fmt.Errorf("AI analysis failed: %w", err)
 		}
 
-		fmt.Fprintln(out, "------------------------------------------------------------")
-		fmt.Fprintln(out, "Local AI Vulnerability Analysis")
-		fmt.Fprintln(out, "------------------------------------------------------------")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "================================================================================")
+		fmt.Fprintln(out, "                       AI DEFENSIVE ANALYSIS REPORT                             ")
+		fmt.Fprintln(out, "================================================================================")
 		fmt.Fprintln(out, strings.TrimSpace(analysis))
-		fmt.Fprintln(out, "------------------------------------------------------------")
+		fmt.Fprintln(out, "================================================================================")
 
 		return nil
 	},
@@ -63,9 +67,36 @@ func init() {
 	rootCmd.AddCommand(scanCmd)
 
 	scanCmd.Flags().StringVarP(&scanOptions.target, "target", "t", "", "Target URL to scan")
-	scanCmd.Flags().StringVar(&scanOptions.model, "model", "qwen2.5-coder:1.5b", "Local LLM model name")
 	scanCmd.Flags().StringVar(&scanOptions.severity, "severity", "medium,high,critical", "Severity levels to include")
 	_ = scanCmd.MarkFlagRequired("target")
+}
+
+func startScanTicker(out io.Writer, target string) func() {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+
+	go func() {
+		defer close(finished)
+
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		elapsed := 0
+		for {
+			select {
+			case <-ticker.C:
+				elapsed += 10
+				fmt.Fprintf(out, " [SCAN] Active for %ds on %s; first run may download templates.\n", elapsed, target)
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+		<-finished
+	}
 }
 
 func parseSeverityFlag(value string) []string {
@@ -97,12 +128,28 @@ func formatFindingsSummary(findings []parser.NucleiFinding) (string, error) {
 		fmt.Fprintf(&builder, "Severity: %s\n", finding.Severity)
 		fmt.Fprintf(&builder, "Matched At: %s\n", finding.MatchedAt)
 
+		if finding.Host != "" {
+			fmt.Fprintf(&builder, "Host: %s\n", finding.Host)
+		}
+
 		if finding.Info.Description != "" {
 			fmt.Fprintf(&builder, "Description: %s\n", finding.Info.Description)
 		}
 
+		if finding.CurlCommand != "" {
+			fmt.Fprintf(&builder, "Curl Command: %s\n", finding.CurlCommand)
+		}
+
 		if len(finding.ExtractedResults) > 0 {
 			fmt.Fprintf(&builder, "Extracted Results: %s\n", strings.Join(finding.ExtractedResults, ", "))
+		}
+
+		if finding.Request != "" {
+			fmt.Fprintf(&builder, "Request: %s\n", finding.Request)
+		}
+
+		if finding.Response != "" {
+			fmt.Fprintf(&builder, "Response: %s\n", finding.Response)
 		}
 	}
 
