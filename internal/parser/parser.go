@@ -30,11 +30,20 @@ type NucleiInfo struct {
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
-func ParseAndFilter(rawOutput string, allowedSeverities []string) ([]NucleiFinding, error) {
-	return ParseAndFilterReader(strings.NewReader(rawOutput), allowedSeverities)
+type Options struct {
+	Verbose   bool
+	LogWriter io.Writer
 }
 
-func ParseAndFilterReader(input io.Reader, allowedSeverities []string) ([]NucleiFinding, error) {
+func ParseAndFilter(rawOutput string, allowedSeverities []string) ([]NucleiFinding, error) {
+	return ParseAndFilterReader(strings.NewReader(rawOutput), allowedSeverities, Options{})
+}
+
+func ParseAndFilterReader(input io.Reader, allowedSeverities []string, options Options) ([]NucleiFinding, error) {
+	if options.LogWriter == nil {
+		options.LogWriter = io.Discard
+	}
+
 	allowed := make(map[string]struct{}, len(allowedSeverities))
 	for _, severity := range allowedSeverities {
 		normalized := strings.ToLower(strings.TrimSpace(severity))
@@ -56,7 +65,9 @@ func ParseAndFilterReader(input io.Reader, allowedSeverities []string) ([]Nuclei
 
 		var finding NucleiFinding
 		if err := json.Unmarshal([]byte(line), &finding); err != nil {
-			fmt.Printf("[WARN] Skipping malformed Nuclei JSONL line: %v\n", err)
+			if options.Verbose {
+				fmt.Fprintf(options.LogWriter, "[WARN] Skipping malformed Nuclei JSONL line: %v\n", err)
+			}
 			continue
 		}
 
@@ -68,8 +79,16 @@ func ParseAndFilterReader(input io.Reader, allowedSeverities []string) ([]Nuclei
 			finding.Severity = finding.Info.Severity
 		}
 
-		if _, ok := allowed[strings.ToLower(strings.TrimSpace(finding.Severity))]; !ok {
+		severityKey := strings.ToLower(strings.TrimSpace(finding.Severity))
+		if _, ok := allowed[severityKey]; !ok {
+			if options.Verbose {
+				fmt.Fprintf(options.LogWriter, "[DEBUG] Skipping finding %q (severity=%q, not in allowed list)\n", finding.Name, finding.Severity)
+			}
 			continue
+		}
+
+		if options.Verbose {
+			fmt.Fprintf(options.LogWriter, "[DEBUG] Matched finding: %q (severity=%q, matched-at=%q)\n", finding.Name, finding.Severity, finding.MatchedAt)
 		}
 
 		findings = append(findings, finding)

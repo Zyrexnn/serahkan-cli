@@ -102,6 +102,24 @@ Menjalankan pemindaian Nuclei terhadap target tertentu dan menganalisis temuanny
 | :--- | :--- | :--- | :--- | :--- |
 | `--target` | `-t` | `string` | **(Wajib)** URL target pemindaian (contoh: `http://example.com`) | |
 | `--severity` | | `string` | Filter tingkat bahaya kerentanan yang ingin dianalisis (dipisahkan koma) | `medium,high,critical` |
+| `--timeout` | | `int` | Timeout dalam detik per request HTTP Nuclei | `30` |
+| `--retries` | | `int` | Jumlah percobaan ulang untuk pemindaian Nuclei | `2` |
+| `--verbose` | `-v` | `bool` | Tampilkan log debugging verbose di stderr | `false` |
+| `--no-interactsh` | | `bool` | Nonaktifkan template OOB (out-of-band) untuk mengurangi dependensi | `false` |
+| `--ai-endpoint` | | `string` | Endpoint API AI lokal (override environment variable) | `http://127.0.0.1:1234/v1/chat/completions` |
+| `--ai-model` | | `string` | Nama model AI yang digunakan | `qwen2.5-coder-1.5b-instruct` |
+| `--ai-api-key` | | `string` | API key untuk endpoint AI (diperlukan untuk endpoint cloud) | |
+| `--ai-timeout` | | `int` | Timeout dalam detik untuk respons AI | `120` |
+| `--limit` | | `int` | Jumlah maksimal temuan yang dikirim ke AI untuk analisis | `10` |
+
+#### Environment Variables:
+Anda juga dapat mengonfigurasi AI melalui environment variable:
+
+| Variable | Deskripsi |
+| :--- | :--- |
+| `SERAHKAN_AI_ENDPOINT` | Endpoint API AI lokal |
+| `SERAHKAN_AI_MODEL` | Nama model AI |
+| `SERAHKAN_AI_API_KEY` | API key untuk AI endpoint |
 
 #### Contoh Perintah:
 ```bash
@@ -110,6 +128,15 @@ Menjalankan pemindaian Nuclei terhadap target tertentu dan menganalisis temuanny
 
 # Memindai target hanya untuk kerentanan tingkat tinggi dan kritis
 ./serahkan scan --target http://testphp.vulnweb.com --severity high,critical
+
+# Memindai dengan model AI berbeda
+./serahkan scan -t http://example.com --ai-model llama-3.2-3b-instruct-uncensored
+
+# Memindai dengan timeout yang lebih lama dan limit temuan lebih banyak
+./serahkan scan -t http://example.com --timeout 60 --limit 20
+
+# Mengaktifkan mode verbose untuk debugging
+./serahkan scan -t http://example.com --verbose
 ```
 
 ---

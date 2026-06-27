@@ -2,17 +2,21 @@ package ai
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
 
-const localAIEndpoint = "http://127.0.0.1:1234/v1/chat/completions"
+const defaultLocalAIEndpoint = "http://127.0.0.1:1234/v1/chat/completions"
 
-const localAIModel = "qwen2.5-coder-1.5b-instruct"
+const defaultLocalAIModel = "qwen2.5-coder-1.5b-instruct"
+
+const defaultTimeout = 120 * time.Second
 
 const systemPrompt = `You are an elite automated DevSecOps AI agent and advanced source-code auditor built into the 'serahkan-cli' platform. Analyze raw vulnerability logs and output a highly technical, cyber-security-themed report.
 
@@ -36,7 +40,7 @@ STRICT OUTPUT RULE: Do not use markdown headers (#, ##). You MUST strictly repli
     - Technical Overview: [Brief description]
     - Manual Proof-of-Concept Validation:
       * Execute Command:
-        $ [Real curl command, no hallucination]
+        $ [Real curl command, NO HALLUCINATION. If a curl command was NOT provided in the input log, you MUST write "N/A". DO NOT construct or hallucinate a curl command.]
       * Expected Response Indicator: [What to check]
 ---------------------------------------------------------------------------
 
@@ -67,9 +71,49 @@ type ChatCompletionChoice struct {
 	Message ChatMessage `json:"message"`
 }
 
-func SendToLocalAI(prompt string) (string, error) {
+type Config struct {
+	Endpoint string
+	Model    string
+	Timeout  time.Duration
+	ApiKey   string // optional: sent as "Authorization: Bearer <key>" if set
+}
+
+func DefaultConfig() Config {
+	endpoint := strings.TrimSpace(os.Getenv("SERAHKAN_AI_ENDPOINT"))
+	if endpoint == "" {
+		endpoint = defaultLocalAIEndpoint
+	}
+
+	model := strings.TrimSpace(os.Getenv("SERAHKAN_AI_MODEL"))
+	if model == "" {
+		model = defaultLocalAIModel
+	}
+
+	apiKey := strings.TrimSpace(os.Getenv("SERAHKAN_AI_API_KEY"))
+
+	return Config{
+		Endpoint: endpoint,
+		Model:    model,
+		Timeout:  defaultTimeout,
+		ApiKey:   apiKey,
+	}
+}
+
+func SendToLocalAI(ctx context.Context, prompt string, config Config) (string, error) {
+	if strings.TrimSpace(config.Endpoint) == "" {
+		return "", fmt.Errorf("AI endpoint cannot be empty")
+	}
+
+	if strings.TrimSpace(config.Model) == "" {
+		return "", fmt.Errorf("AI model cannot be empty")
+	}
+
+	if config.Timeout <= 0 {
+		config.Timeout = defaultTimeout
+	}
+
 	payload := ChatCompletionRequest{
-		Model: localAIModel,
+		Model: strings.TrimSpace(config.Model),
 		Messages: []ChatMessage{
 			{
 				Role:    "system",
@@ -89,19 +133,22 @@ func SendToLocalAI(prompt string) (string, error) {
 	}
 
 	client := &http.Client{
-		Timeout: 120 * time.Second,
+		Timeout: config.Timeout,
 	}
 
-	req, err := http.NewRequest(http.MethodPost, localAIEndpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSpace(config.Endpoint), bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create AI request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(config.ApiKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(config.ApiKey))
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to reach local AI server at %s: %w", localAIEndpoint, err)
+		return "", fmt.Errorf("failed to reach local AI server at %s: %w", strings.TrimSpace(config.Endpoint), err)
 	}
 	defer resp.Body.Close()
 
