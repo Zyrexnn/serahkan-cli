@@ -3,10 +3,14 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +102,21 @@ func TestDefaultConfig(t *testing.T) {
 			t.Fatalf("expected retry count from config, got %d", cfg.RetryCount)
 		}
 	})
+}
+
+func TestClassifyAIConnectionError(t *testing.T) {
+	err := &url.Error{
+		Op:  "Post",
+		URL: "http://127.0.0.1:1234/v1/chat/completions",
+		Err: &net.OpError{
+			Err: errors.New("connect: connection refused"),
+		},
+	}
+
+	classified := classifyAIConnectionError("http://127.0.0.1:1234/v1/chat/completions", err)
+	if !strings.Contains(classified.Error(), "not accepting connections") {
+		t.Fatalf("expected actionable connection-refused message, got %q", classified.Error())
+	}
 }
 
 func TestSendToLocalAIValidation(t *testing.T) {

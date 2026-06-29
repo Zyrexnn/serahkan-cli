@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -214,7 +215,7 @@ func sendSingleRequest(ctx context.Context, body []byte, config Config) (string,
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to reach local AI server at %s: %w", strings.TrimSpace(config.Endpoint), err)
+		return "", classifyAIConnectionError(strings.TrimSpace(config.Endpoint), err)
 	}
 	defer resp.Body.Close()
 
@@ -256,6 +257,9 @@ func isRetryableAIError(err error) bool {
 	if strings.Contains(message, "context deadline exceeded") {
 		return true
 	}
+	if strings.Contains(message, "connection refused") {
+		return false
+	}
 
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
@@ -263,4 +267,18 @@ func isRetryableAIError(err error) bool {
 	}
 
 	return false
+}
+
+func classifyAIConnectionError(endpoint string, err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		var opErr *net.OpError
+		if errors.As(urlErr.Err, &opErr) {
+			if strings.Contains(strings.ToLower(opErr.Err.Error()), "connection refused") {
+				return fmt.Errorf("local AI server is not accepting connections at %s: %w. Ensure LM Studio or your OpenAI-compatible local server has started its HTTP server and is listening on that port", endpoint, err)
+			}
+		}
+	}
+
+	return fmt.Errorf("failed to reach local AI server at %s: %w", endpoint, err)
 }
