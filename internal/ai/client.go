@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	cfgstore "github.com/Zyrexnn/serahkan-cli/internal/config"
 )
 
 const defaultLocalAIEndpoint = "http://127.0.0.1:1234/v1/chat/completions"
@@ -17,6 +21,10 @@ const defaultLocalAIEndpoint = "http://127.0.0.1:1234/v1/chat/completions"
 const defaultLocalAIModel = "qwen2.5-coder-1.5b-instruct"
 
 const defaultTimeout = 120 * time.Second
+
+const defaultRetryCount = 2
+
+const defaultRetryDelay = 2 * time.Second
 
 const systemPrompt = `You are an elite automated DevSecOps AI agent and advanced source-code auditor built into the 'serahkan-cli' platform. Analyze raw vulnerability logs and output a highly technical, cyber-security-themed report.
 
@@ -72,30 +80,59 @@ type ChatCompletionChoice struct {
 }
 
 type Config struct {
-	Endpoint string
-	Model    string
-	Timeout  time.Duration
-	ApiKey   string // optional: sent as "Authorization: Bearer <key>" if set
+	Endpoint   string
+	Model      string
+	Timeout    time.Duration
+	ApiKey     string
+	RetryCount int
+	RetryDelay time.Duration
 }
 
 func DefaultConfig() Config {
-	endpoint := strings.TrimSpace(os.Getenv("SERAHKAN_AI_ENDPOINT"))
+	fileConfig, _, err := cfgstore.Load()
+	if err != nil {
+		fileConfig = cfgstore.Config{}
+	}
+
+	endpoint := strings.TrimSpace(fileConfig.AI.Endpoint)
+	model := strings.TrimSpace(fileConfig.AI.Model)
+	apiKey := strings.TrimSpace(fileConfig.AI.APIKey)
+
+	if envEndpoint := strings.TrimSpace(os.Getenv("SERAHKAN_AI_ENDPOINT")); envEndpoint != "" {
+		endpoint = envEndpoint
+	}
+	if envModel := strings.TrimSpace(os.Getenv("SERAHKAN_AI_MODEL")); envModel != "" {
+		model = envModel
+	}
+	if envAPIKey := strings.TrimSpace(os.Getenv("SERAHKAN_AI_API_KEY")); envAPIKey != "" {
+		apiKey = envAPIKey
+	}
+
 	if endpoint == "" {
 		endpoint = defaultLocalAIEndpoint
 	}
 
-	model := strings.TrimSpace(os.Getenv("SERAHKAN_AI_MODEL"))
 	if model == "" {
 		model = defaultLocalAIModel
 	}
 
-	apiKey := strings.TrimSpace(os.Getenv("SERAHKAN_AI_API_KEY"))
+	timeout := defaultTimeout
+	if fileConfig.AI.TimeoutSeconds > 0 {
+		timeout = time.Duration(fileConfig.AI.TimeoutSeconds) * time.Second
+	}
+
+	retryCount := defaultRetryCount
+	if fileConfig.AI.RetryCount > 0 {
+		retryCount = fileConfig.AI.RetryCount
+	}
 
 	return Config{
-		Endpoint: endpoint,
-		Model:    model,
-		Timeout:  defaultTimeout,
-		ApiKey:   apiKey,
+		Endpoint:   endpoint,
+		Model:      model,
+		Timeout:    timeout,
+		ApiKey:     apiKey,
+		RetryCount: retryCount,
+		RetryDelay: defaultRetryDelay,
 	}
 }
 
@@ -110,6 +147,12 @@ func SendToLocalAI(ctx context.Context, prompt string, config Config) (string, e
 
 	if config.Timeout <= 0 {
 		config.Timeout = defaultTimeout
+	}
+	if config.RetryCount < 0 {
+		config.RetryCount = 0
+	}
+	if config.RetryDelay <= 0 {
+		config.RetryDelay = defaultRetryDelay
 	}
 
 	payload := ChatCompletionRequest{
@@ -132,6 +175,29 @@ func SendToLocalAI(ctx context.Context, prompt string, config Config) (string, e
 		return "", fmt.Errorf("failed to encode AI request: %w", err)
 	}
 
+	var lastErr error
+	for attempt := 0; attempt <= config.RetryCount; attempt++ {
+		content, err := sendSingleRequest(ctx, body, config)
+		if err == nil {
+			return content, nil
+		}
+
+		lastErr = err
+		if !isRetryableAIError(err) || attempt == config.RetryCount {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("AI request canceled: %w", ctx.Err())
+		case <-time.After(config.RetryDelay):
+		}
+	}
+
+	return "", lastErr
+}
+
+func sendSingleRequest(ctx context.Context, body []byte, config Config) (string, error) {
 	client := &http.Client{
 		Timeout: config.Timeout,
 	}
@@ -176,4 +242,25 @@ func SendToLocalAI(ctx context.Context, prompt string, config Config) (string, e
 	}
 
 	return content, nil
+}
+
+func isRetryableAIError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := err.Error()
+	if strings.Contains(message, "local AI server returned 5") {
+		return true
+	}
+	if strings.Contains(message, "context deadline exceeded") {
+		return true
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	return false
 }

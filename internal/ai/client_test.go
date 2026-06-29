@@ -1,26 +1,36 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	cfgstore "github.com/Zyrexnn/serahkan-cli/internal/config"
 )
 
 func TestDefaultConfig(t *testing.T) {
 	// Backup env vars
 	origEndpoint := os.Getenv("SERAHKAN_AI_ENDPOINT")
 	origModel := os.Getenv("SERAHKAN_AI_MODEL")
+	origAPIKey := os.Getenv("SERAHKAN_AI_API_KEY")
+	origConfig := os.Getenv("SERAHKAN_CONFIG")
 	defer func() {
 		os.Setenv("SERAHKAN_AI_ENDPOINT", origEndpoint)
 		os.Setenv("SERAHKAN_AI_MODEL", origModel)
+		os.Setenv("SERAHKAN_AI_API_KEY", origAPIKey)
+		os.Setenv("SERAHKAN_CONFIG", origConfig)
 	}()
 
 	t.Run("default values when env is empty", func(t *testing.T) {
 		os.Setenv("SERAHKAN_AI_ENDPOINT", "")
 		os.Setenv("SERAHKAN_AI_MODEL", "")
+		os.Setenv("SERAHKAN_AI_API_KEY", "")
+		os.Setenv("SERAHKAN_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 
 		cfg := DefaultConfig()
 		if cfg.Endpoint != defaultLocalAIEndpoint {
@@ -39,6 +49,8 @@ func TestDefaultConfig(t *testing.T) {
 		customModel := "custom-deepseek-model"
 		os.Setenv("SERAHKAN_AI_ENDPOINT", customEndpoint)
 		os.Setenv("SERAHKAN_AI_MODEL", customModel)
+		os.Setenv("SERAHKAN_AI_API_KEY", "")
+		os.Setenv("SERAHKAN_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 
 		cfg := DefaultConfig()
 		if cfg.Endpoint != customEndpoint {
@@ -48,18 +60,56 @@ func TestDefaultConfig(t *testing.T) {
 			t.Errorf("expected model %q, got %q", customModel, cfg.Model)
 		}
 	})
+
+	t.Run("uses config file when env is empty", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "config.json")
+		os.Setenv("SERAHKAN_AI_ENDPOINT", "")
+		os.Setenv("SERAHKAN_AI_MODEL", "")
+		os.Setenv("SERAHKAN_AI_API_KEY", "")
+		os.Setenv("SERAHKAN_CONFIG", configPath)
+
+		err := cfgstore.SaveToPath(configPath, cfgstore.Config{
+			AI: cfgstore.AIConfig{
+				Endpoint:       "http://from-config:1234/v1/chat/completions",
+				Model:          "from-config-model",
+				APIKey:         "from-config-key",
+				TimeoutSeconds: 90,
+				RetryCount:     4,
+			},
+		})
+		if err != nil {
+			t.Fatalf("SaveToPath() error = %v", err)
+		}
+
+		cfg := DefaultConfig()
+		if cfg.Endpoint != "http://from-config:1234/v1/chat/completions" {
+			t.Fatalf("expected endpoint from config, got %q", cfg.Endpoint)
+		}
+		if cfg.Model != "from-config-model" {
+			t.Fatalf("expected model from config, got %q", cfg.Model)
+		}
+		if cfg.ApiKey != "from-config-key" {
+			t.Fatalf("expected api key from config, got %q", cfg.ApiKey)
+		}
+		if cfg.Timeout != 90*time.Second {
+			t.Fatalf("expected timeout from config, got %v", cfg.Timeout)
+		}
+		if cfg.RetryCount != 4 {
+			t.Fatalf("expected retry count from config, got %d", cfg.RetryCount)
+		}
+	})
 }
 
 func TestSendToLocalAIValidation(t *testing.T) {
 	cfg := Config{}
 
-	_, err := SendToLocalAI("hello", cfg)
+	_, err := SendToLocalAI(context.Background(), "hello", cfg)
 	if err == nil || err.Error() != "AI endpoint cannot be empty" {
 		t.Errorf("expected empty endpoint error, got: %v", err)
 	}
 
 	cfg.Endpoint = "http://localhost"
-	_, err = SendToLocalAI("hello", cfg)
+	_, err = SendToLocalAI(context.Background(), "hello", cfg)
 	if err == nil || err.Error() != "AI model cannot be empty" {
 		t.Errorf("expected empty model error, got: %v", err)
 	}
@@ -113,7 +163,7 @@ func TestSendToLocalAIMockServer(t *testing.T) {
 		Timeout:  5 * time.Second,
 	}
 
-	reply, err := SendToLocalAI("some vulnerability input", cfg)
+	reply, err := SendToLocalAI(context.Background(), "some vulnerability input", cfg)
 	if err != nil {
 		t.Fatalf("unexpected error calling SendToLocalAI: %v", err)
 	}
@@ -136,7 +186,7 @@ func TestSendToLocalAIErrorHandling(t *testing.T) {
 			Model:    "test-model",
 		}
 
-		_, err := SendToLocalAI("vulnerability summary", cfg)
+		_, err := SendToLocalAI(context.Background(), "vulnerability summary", cfg)
 		if err == nil {
 			t.Error("expected error from 500 response, got nil")
 		}
@@ -158,9 +208,55 @@ func TestSendToLocalAIErrorHandling(t *testing.T) {
 			Model:    "test-model",
 		}
 
-		_, err := SendToLocalAI("vulnerability summary", cfg)
+		_, err := SendToLocalAI(context.Background(), "vulnerability summary", cfg)
 		if err == nil || err.Error() != "local AI server returned no completion choices" {
 			t.Errorf("expected no completion choices error, got: %v", err)
+		}
+	})
+
+	t.Run("retries on transient server error", func(t *testing.T) {
+		attempts := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts++
+			if attempts == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte("temporary failure"))
+				return
+			}
+
+			resp := ChatCompletionResponse{
+				Choices: []ChatCompletionChoice{
+					{
+						Message: ChatMessage{
+							Role:    "assistant",
+							Content: "Recovered response",
+						},
+					},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		cfg := Config{
+			Endpoint:   server.URL,
+			Model:      "test-model",
+			Timeout:    5 * time.Second,
+			RetryCount: 1,
+			RetryDelay: 10 * time.Millisecond,
+		}
+
+		reply, err := SendToLocalAI(context.Background(), "vulnerability summary", cfg)
+		if err != nil {
+			t.Fatalf("expected retry to recover, got error: %v", err)
+		}
+		if reply != "Recovered response" {
+			t.Fatalf("expected recovered response, got %q", reply)
+		}
+		if attempts != 2 {
+			t.Fatalf("expected 2 attempts, got %d", attempts)
 		}
 	})
 }
