@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/Zyrexnn/serahkan-cli/internal/parser"
 )
@@ -18,12 +20,17 @@ type Options struct {
 	TimeoutSeconds int
 	Retries        int
 	Verbose        bool
-	NoInteractsh   bool // when true, passes -ni flag to disable OOB interaction templates
+	NoInteractsh   bool
 	LogWriter      io.Writer
 }
 
+var (
+	nucleiFlagSupportMu sync.Mutex
+	nucleiFlagSupport   = map[string]map[string]bool{}
+)
+
 func RunNuclei(ctx context.Context, target string, allowedSeverities []string, options Options) ([]parser.NucleiFinding, error) {
-	nucleiPath, err := resolveNucleiPath()
+	nucleiPath, err := ResolveNucleiPath()
 	if err != nil {
 		return nil, err
 	}
@@ -40,20 +47,11 @@ func RunNuclei(ctx context.Context, target string, allowedSeverities []string, o
 		options.LogWriter = io.Discard
 	}
 
-	nucleiArgs := []string{
-		"-target", target,
-		"-jsonl",
-		"-irr",
-		"-severity", strings.Join(allowedSeverities, ","),
-		"-timeout", fmt.Sprint(options.TimeoutSeconds),
-		"-retries", fmt.Sprint(options.Retries),
-		"-leave-default-ports",
-	}
-	if options.NoInteractsh {
-		nucleiArgs = append(nucleiArgs, "-ni")
-	}
+	nucleiArgs := buildNucleiArgs(nucleiPath, target, allowedSeverities, options)
+
 	cmd := exec.CommandContext(ctx, nucleiPath, nucleiArgs...)
-	cmd.Stderr = os.Stderr
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	if options.Verbose {
 		fmt.Fprintln(options.LogWriter, "[DEBUG] Nuclei executable:", nucleiPath)
@@ -70,7 +68,7 @@ func RunNuclei(ctx context.Context, target string, allowedSeverities []string, o
 		return nil, fmt.Errorf("failed to start nuclei: %w", err)
 	}
 
-	findings, parseErr := parser.ParseAndFilterReader(stdout, allowedSeverities, parser.Options{
+	parseResult, parseErr := parser.ParseAndFilterDetailed(stdout, allowedSeverities, parser.Options{
 		Verbose:   options.Verbose,
 		LogWriter: options.LogWriter,
 	})
@@ -80,32 +78,90 @@ func RunNuclei(ctx context.Context, target string, allowedSeverities []string, o
 		return nil, fmt.Errorf("failed to parse nuclei output: %w", parseErr)
 	}
 
-	// Nuclei frequently exits with a non-zero code even when findings exist
-	// (e.g. runtime errors in 3 templates, warning-level issues, etc.).
-	// We must NOT discard already-parsed findings in that case.
-	// Only treat it as a fatal error when we have zero findings AND a non-exit error.
 	if waitErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) {
-			// Non-zero exit but we may still have valid findings — log as warning only.
-			fmt.Fprintf(options.LogWriter, " [WARN] Nuclei exited with code %d (this is normal when templates have warnings). Findings parsed: %d\n", exitErr.ExitCode(), len(findings))
+			if parseResult.TotalLines > 0 && parseResult.TotalLines == parseResult.MalformedLines && len(parseResult.Findings) == 0 {
+				message := strings.TrimSpace(stderr.String())
+				if message == "" {
+					message = "nuclei returned non-JSON output"
+				}
+				return nil, fmt.Errorf("nuclei execution failed with exit code %d: %s", exitErr.ExitCode(), message)
+			}
+
+			if options.Verbose {
+				fmt.Fprintf(options.LogWriter, "[WARN] nuclei exited with code %d; findings=%d\n", exitErr.ExitCode(), len(parseResult.Findings))
+				if stderr.Len() > 0 {
+					fmt.Fprintf(options.LogWriter, "[WARN] nuclei stderr: %s\n", strings.TrimSpace(stderr.String()))
+				}
+			}
 		} else {
-			// Unexpected OS-level failure with no findings — surface as error.
-			if len(findings) == 0 {
+			if len(parseResult.Findings) == 0 {
 				return nil, fmt.Errorf("failed to run nuclei: %w", waitErr)
 			}
-			fmt.Fprintf(options.LogWriter, " [WARN] Nuclei runner error (non-fatal, findings preserved): %v\n", waitErr)
+			if options.Verbose {
+				fmt.Fprintf(options.LogWriter, "[WARN] nuclei runner error (non-fatal, findings preserved): %v\n", waitErr)
+			}
 		}
 	}
 
 	if options.Verbose {
-		fmt.Fprintf(options.LogWriter, "[DEBUG] Total findings after filter: %d\n", len(findings))
+		fmt.Fprintf(options.LogWriter, "[DEBUG] Total findings after filter: %d\n", len(parseResult.Findings))
 	}
 
-	return findings, nil
+	return parseResult.Findings, nil
 }
 
-func resolveNucleiPath() (string, error) {
+func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, options Options) []string {
+	args := []string{
+		"-target", target,
+		"-jsonl",
+		"-irr",
+		"-silent",
+		"-severity", strings.Join(allowedSeverities, ","),
+		"-timeout", fmt.Sprint(options.TimeoutSeconds),
+		"-retries", fmt.Sprint(options.Retries),
+		"-c", "150",
+		"-rl", "500",
+		"-leave-default-ports",
+	}
+
+	if supportsNucleiFlag(nucleiPath, "-no-banner") {
+		args = append(args, "-no-banner")
+	}
+
+	if options.NoInteractsh {
+		args = append(args, "-ni")
+	}
+
+	return args
+}
+
+func supportsNucleiFlag(nucleiPath, flag string) bool {
+	nucleiFlagSupportMu.Lock()
+	if support, ok := nucleiFlagSupport[nucleiPath]; ok {
+		if value, ok := support[flag]; ok {
+			nucleiFlagSupportMu.Unlock()
+			return value
+		}
+	}
+	nucleiFlagSupportMu.Unlock()
+
+	cmd := exec.Command(nucleiPath, "-h")
+	output, err := cmd.CombinedOutput()
+	supported := err == nil && strings.Contains(string(output), flag)
+
+	nucleiFlagSupportMu.Lock()
+	if _, ok := nucleiFlagSupport[nucleiPath]; !ok {
+		nucleiFlagSupport[nucleiPath] = map[string]bool{}
+	}
+	nucleiFlagSupport[nucleiPath][flag] = supported
+	nucleiFlagSupportMu.Unlock()
+
+	return supported
+}
+
+func ResolveNucleiPath() (string, error) {
 	for _, binaryName := range localNucleiCandidates() {
 		if _, err := os.Stat(binaryName); err == nil {
 			absPath, err := filepath.Abs(binaryName)

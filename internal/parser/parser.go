@@ -35,11 +35,31 @@ type Options struct {
 	LogWriter io.Writer
 }
 
+type ParseResult struct {
+	Findings       []NucleiFinding
+	TotalLines     int
+	MalformedLines int
+}
+
 func ParseAndFilter(rawOutput string, allowedSeverities []string) ([]NucleiFinding, error) {
-	return ParseAndFilterReader(strings.NewReader(rawOutput), allowedSeverities, Options{})
+	result, err := ParseAndFilterDetailed(strings.NewReader(rawOutput), allowedSeverities, Options{})
+	if err != nil {
+		return nil, err
+	}
+
+	return result.Findings, nil
 }
 
 func ParseAndFilterReader(input io.Reader, allowedSeverities []string, options Options) ([]NucleiFinding, error) {
+	result, err := ParseAndFilterDetailed(input, allowedSeverities, options)
+	if err != nil {
+		return nil, err
+	}
+
+	return result.Findings, nil
+}
+
+func ParseAndFilterDetailed(input io.Reader, allowedSeverities []string, options Options) (ParseResult, error) {
 	if options.LogWriter == nil {
 		options.LogWriter = io.Discard
 	}
@@ -52,19 +72,24 @@ func ParseAndFilterReader(input io.Reader, allowedSeverities []string, options O
 		}
 	}
 
-	findings := make([]NucleiFinding, 0)
+	result := ParseResult{
+		Findings: make([]NucleiFinding, 0),
+	}
+
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
 	for scanner.Scan() {
-		line := scanner.Text()
-		line = strings.TrimSpace(line)
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
 
+		result.TotalLines++
+
 		var finding NucleiFinding
 		if err := json.Unmarshal([]byte(line), &finding); err != nil {
+			result.MalformedLines++
 			if options.Verbose {
 				fmt.Fprintf(options.LogWriter, "[WARN] Skipping malformed Nuclei JSONL line: %v\n", err)
 			}
@@ -91,12 +116,12 @@ func ParseAndFilterReader(input io.Reader, allowedSeverities []string, options O
 			fmt.Fprintf(options.LogWriter, "[DEBUG] Matched finding: %q (severity=%q, matched-at=%q)\n", finding.Name, finding.Severity, finding.MatchedAt)
 		}
 
-		findings = append(findings, finding)
+		result.Findings = append(result.Findings, finding)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return ParseResult{}, err
 	}
 
-	return findings, nil
+	return result, nil
 }

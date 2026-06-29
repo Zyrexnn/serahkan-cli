@@ -106,6 +106,26 @@ func TestMalformedJSONLogging(t *testing.T) {
 	}
 }
 
+func TestParseAndFilterDetailed(t *testing.T) {
+	inputJSONL := `{"template-id":"xss","name":"Cross-Site Scripting","severity":"high","host":"example.com","matched-at":"http://example.com/","info":{"name":"Cross-Site Scripting","severity":"high"}}
+invalid-json-here`
+
+	result, err := ParseAndFilterDetailed(bytes.NewBufferString(inputJSONL), []string{"high"}, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.TotalLines != 2 {
+		t.Fatalf("expected TotalLines=2, got %d", result.TotalLines)
+	}
+	if result.MalformedLines != 1 {
+		t.Fatalf("expected MalformedLines=1, got %d", result.MalformedLines)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(result.Findings))
+	}
+}
+
 func TestParseAndFilterHelper(t *testing.T) {
 	input := `{"template-id":"xss","name":"XSS","severity":"high","info":{"name":"XSS","severity":"high"}}`
 	findings, err := ParseAndFilter(input, []string{"high"})
