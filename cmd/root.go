@@ -10,6 +10,7 @@ var rootCmd = &cobra.Command{
 	Use:          "serahkan",
 	Short:        "AI-powered bug bounty and pentesting CLI wrapper",
 	SilenceUsage: true,
+	Version:      Version,
 }
 
 func Execute() {

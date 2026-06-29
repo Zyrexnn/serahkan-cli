@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -15,17 +16,18 @@ import (
 )
 
 var scanOptions struct {
-	target        string
-	severity      string
-	timeout       int
-	retries       int
-	verbose       bool
-	noInteractsh  bool
-	aiEndpoint    string
-	aiModel       string
-	aiApiKey      string
-	aiTimeout     int
-	limit         int
+	target       string
+	severity     string
+	timeout      int
+	retries      int
+	verbose      bool
+	noInteractsh bool
+	aiEndpoint   string
+	aiModel      string
+	aiApiKey     string
+	aiTimeout    int
+	limit        int
+	output       string
 }
 
 var severityRank = map[string]int{
@@ -36,24 +38,41 @@ var severityRank = map[string]int{
 	"info":     0,
 }
 
+const maxAISummaryChars = 6000
+
+type scanJSONReport struct {
+	Target             string                 `json:"target"`
+	Severities         []string               `json:"severities"`
+	FindingCount       int                    `json:"finding_count"`
+	AIUsed             bool                   `json:"ai_used"`
+	AIStatus           string                 `json:"ai_status"`
+	AIError            string                 `json:"ai_error,omitempty"`
+	AIAnalysis         string                 `json:"ai_analysis,omitempty"`
+	Findings           []parser.NucleiFinding `json:"findings"`
+	DurationSeconds    int64                  `json:"duration_seconds"`
+	GeneratedAtUnixUTC int64                  `json:"generated_at_unix_utc"`
+}
+
 var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Run a Nuclei scan against a target",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		out := cmd.OutOrStdout()
 		logOut := cmd.ErrOrStderr()
+		startedAt := time.Now()
 
-		// Validate target URL and scheme
 		if err := validateTarget(scanOptions.target); err != nil {
+			return err
+		}
+		if err := validateOutputMode(scanOptions.output); err != nil {
 			return err
 		}
 
 		allowedSeverities := parseSeverityFlag(scanOptions.severity)
 
-		fmt.Fprintf(logOut, " [SCAN] Running automated vulnerability scanning on %s...\n", scanOptions.target)
+		fmt.Fprintf(logOut, "[SCAN] target=%s severities=%s\n", scanOptions.target, strings.Join(allowedSeverities, ","))
 		stopTicker := startScanTicker(logOut, scanOptions.target)
 
-		// Set runner options
 		runOptions := runner.Options{
 			TimeoutSeconds: scanOptions.timeout,
 			Retries:        scanOptions.retries,
@@ -68,29 +87,23 @@ var scanCmd = &cobra.Command{
 			return fmt.Errorf("scan failed: %w", err)
 		}
 
-		fmt.Fprintln(logOut, " [PARSER] Log filtering completed. Analyzing severity payload...")
+		fmt.Fprintln(logOut, "[FILTER] nuclei output parsed")
 
 		if len(findings) == 0 {
-			fmt.Fprintln(out)
-			fmt.Fprintf(out, "[SUCCESS] Scan complete. No vulnerabilities matching severity levels [%s] detected on %s.\n", strings.Join(allowedSeverities, ", "), scanOptions.target)
-			fmt.Fprintln(out)
-			return nil
+			return emitNoFindings(out, scanOptions.target, allowedSeverities, scanOptions.output, time.Since(startedAt))
 		}
 
-		// Sort, truncate, and limit findings summary before sending to AI
 		summary, err := formatFindingsSummary(findings, scanOptions.limit)
 		if err != nil {
 			return fmt.Errorf("failed to format findings summary: %w", err)
 		}
 
-		// Limit the findings slice for the fallback validator to use
 		if len(findings) > scanOptions.limit {
 			findings = findings[:scanOptions.limit]
 		}
 
-		fmt.Fprintln(logOut, " [AI] Local LLM is generating defensive analysis and remediation code...")
+		fmt.Fprintf(logOut, "[AI] analyzing %d finding(s)\n", len(findings))
 
-		// Set up AI client configuration
 		aiConfig := ai.DefaultConfig()
 		if scanOptions.aiEndpoint != "" {
 			aiConfig.Endpoint = scanOptions.aiEndpoint
@@ -106,14 +119,35 @@ var scanCmd = &cobra.Command{
 		}
 
 		analysis, aiErr := ai.SendToLocalAI(cmd.Context(), summary, aiConfig)
+		aiUsed := true
+		aiStatus := "ok"
+		aiError := ""
 		if aiErr != nil {
-			fmt.Fprintf(logOut, " [WARN] AI analysis unavailable (%v). Showing findings report without AI analysis.\n", aiErr)
-			analysis = "" // triggers fallback below
+			fmt.Fprintf(logOut, "[WARN] AI unavailable: %v\n", aiErr)
+			analysis = ""
+			aiUsed = false
+			aiStatus = "unavailable"
+			aiError = aiErr.Error()
 		}
 
-		// Validate structure of LLM response, fallback if malformed
 		validatedReport := validateAndFallbackAIOutput(analysis, findings)
+		if aiUsed && strings.TrimSpace(analysis) != "" && strings.TrimSpace(validatedReport) != strings.TrimSpace(analysis) {
+			aiStatus = "fallback"
+		}
 
+		if scanOptions.output == "json" {
+			return emitJSONReport(out, scanOptions.target, allowedSeverities, findings, strings.TrimSpace(validatedReport), aiUsed, aiStatus, aiError, time.Since(startedAt))
+		}
+
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "Target   : %s\n", scanOptions.target)
+		fmt.Fprintf(out, "Findings : %d\n", len(findings))
+		fmt.Fprintf(out, "AI Used  : %t\n", aiUsed)
+		fmt.Fprintf(out, "AI Status: %s\n", aiStatus)
+		fmt.Fprintf(out, "Duration : %s\n", formatDuration(time.Since(startedAt)))
+		if aiError != "" {
+			fmt.Fprintf(out, "AI Error : %s\n", aiError)
+		}
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "================================================================================")
 		fmt.Fprintln(out, "                       AI DEFENSIVE ANALYSIS REPORT                             ")
@@ -134,11 +168,12 @@ func init() {
 	scanCmd.Flags().IntVar(&scanOptions.retries, "retries", 2, "Number of retries for Nuclei scan")
 	scanCmd.Flags().BoolVarP(&scanOptions.verbose, "verbose", "v", false, "Show verbose debug logging on stderr")
 	scanCmd.Flags().BoolVar(&scanOptions.noInteractsh, "no-interactsh", false, "Disable out-of-band interaction templates (-ni). Reduces coverage but avoids interactsh dependency")
-	scanCmd.Flags().StringVar(&scanOptions.aiEndpoint, "ai-endpoint", "", "Local AI completion endpoint (overrides SERAHKAN_AI_ENDPOINT)")
-	scanCmd.Flags().StringVar(&scanOptions.aiModel, "ai-model", "", "Local AI model name (overrides SERAHKAN_AI_MODEL)")
-	scanCmd.Flags().StringVar(&scanOptions.aiApiKey, "ai-api-key", "", "API key for AI endpoint (overrides SERAHKAN_AI_API_KEY). Required for cloud endpoints.")
+	scanCmd.Flags().StringVar(&scanOptions.aiEndpoint, "ai-endpoint", "", "Local AI completion endpoint (overrides environment and config)")
+	scanCmd.Flags().StringVar(&scanOptions.aiModel, "ai-model", "", "Local AI model name (overrides environment and config)")
+	scanCmd.Flags().StringVar(&scanOptions.aiApiKey, "ai-api-key", "", "API key for AI endpoint (overrides environment and config). Required for cloud endpoints.")
 	scanCmd.Flags().IntVar(&scanOptions.aiTimeout, "ai-timeout", 120, "Timeout in seconds for AI completions")
 	scanCmd.Flags().IntVar(&scanOptions.limit, "limit", 10, "Maximum number of findings to send to AI for analysis")
+	scanCmd.Flags().StringVar(&scanOptions.output, "output", "text", "Output format: text or json")
 
 	_ = scanCmd.MarkFlagRequired("target")
 }
@@ -165,6 +200,52 @@ func validateTarget(target string) error {
 	return nil
 }
 
+func validateOutputMode(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "text", "json":
+		return nil
+	default:
+		return fmt.Errorf("invalid output mode %q. Supported values: text, json", value)
+	}
+}
+
+func emitNoFindings(out io.Writer, target string, severities []string, mode string, duration time.Duration) error {
+	if mode == "json" {
+		return emitJSONReport(out, target, severities, []parser.NucleiFinding{}, "", false, "not_used", "", duration)
+	}
+
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "Target   : %s\n", target)
+	fmt.Fprintf(out, "Findings : 0\n")
+	fmt.Fprintf(out, "AI Used  : false\n")
+	fmt.Fprintf(out, "AI Status: not_used\n")
+	fmt.Fprintf(out, "Duration : %s\n", formatDuration(duration))
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "[SUCCESS] No vulnerabilities matching severity levels [%s] detected.\n", strings.Join(severities, ", "))
+	fmt.Fprintln(out)
+	return nil
+}
+
+func emitJSONReport(out io.Writer, target string, severities []string, findings []parser.NucleiFinding, analysis string, aiUsed bool, aiStatus, aiError string, duration time.Duration) error {
+	report := scanJSONReport{
+		Target:             target,
+		Severities:         severities,
+		FindingCount:       len(findings),
+		AIUsed:             aiUsed,
+		AIStatus:           aiStatus,
+		AIError:            strings.TrimSpace(aiError),
+		AIAnalysis:         strings.TrimSpace(analysis),
+		Findings:           findings,
+		DurationSeconds:    int64(duration.Round(time.Second) / time.Second),
+		GeneratedAtUnixUTC: time.Now().UTC().Unix(),
+	}
+
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+
+	return encoder.Encode(report)
+}
+
 func startScanTicker(out io.Writer, target string) func() {
 	done := make(chan struct{})
 	finished := make(chan struct{})
@@ -180,7 +261,7 @@ func startScanTicker(out io.Writer, target string) func() {
 			select {
 			case <-ticker.C:
 				elapsed += 10
-				fmt.Fprintf(out, " [SCAN] Active for %ds on %s; first run may download templates.\n", elapsed, target)
+				fmt.Fprintf(out, "[SCAN] active=%ds target=%s\n", elapsed, target)
 			case <-done:
 				return
 			}
@@ -191,6 +272,14 @@ func startScanTicker(out io.Writer, target string) func() {
 		close(done)
 		<-finished
 	}
+}
+
+func formatDuration(duration time.Duration) string {
+	if duration < time.Second {
+		return "<1s"
+	}
+
+	return duration.Round(time.Second).String()
 }
 
 func parseSeverityFlag(value string) []string {
@@ -215,7 +304,6 @@ func formatFindingsSummary(findings []parser.NucleiFinding, maxFindings int) (st
 	var builder strings.Builder
 	builder.WriteString("Filtered Nuclei findings requiring defensive analysis:\n")
 
-	// Sort findings by severity (critical -> high -> medium -> low -> info)
 	sort.Slice(findings, func(i, j int) bool {
 		return severityRank[strings.ToLower(findings[i].Severity)] > severityRank[strings.ToLower(findings[j].Severity)]
 	})
@@ -252,23 +340,31 @@ func formatFindingsSummary(findings []parser.NucleiFinding, maxFindings int) (st
 		}
 
 		if finding.Request != "" {
-			req := finding.Request
-			if len(req) > 1000 {
-				req = req[:1000] + "\n... [TRUNCATED]"
-			}
+			req := trimForAI(finding.Request, 400)
 			fmt.Fprintf(&builder, "Request: %s\n", req)
 		}
 
 		if finding.Response != "" {
-			resp := finding.Response
-			if len(resp) > 1000 {
-				resp = resp[:1000] + "\n... [TRUNCATED]"
-			}
+			resp := trimForAI(finding.Response, 400)
 			fmt.Fprintf(&builder, "Response: %s\n", resp)
+		}
+
+		if builder.Len() >= maxAISummaryChars {
+			builder.WriteString("\n... [SUMMARY TRUNCATED FOR AI PAYLOAD LIMIT]\n")
+			break
 		}
 	}
 
-	return builder.String(), nil
+	return trimForAI(builder.String(), maxAISummaryChars), nil
+}
+
+func trimForAI(value string, maxChars int) string {
+	value = strings.TrimSpace(value)
+	if maxChars <= 0 || len(value) <= maxChars {
+		return value
+	}
+
+	return value[:maxChars] + "\n... [TRUNCATED]"
 }
 
 func validateAndFallbackAIOutput(analysis string, findings []parser.NucleiFinding) string {

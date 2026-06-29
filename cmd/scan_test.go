@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Zyrexnn/serahkan-cli/internal/parser"
 )
@@ -111,6 +114,86 @@ func TestParseSeverityFlag(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidateOutputMode(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{input: "text", wantErr: false},
+		{input: "json", wantErr: false},
+		{input: "yaml", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		err := validateOutputMode(tt.input)
+		if (err != nil) != tt.wantErr {
+			t.Fatalf("validateOutputMode(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
+		}
+	}
+}
+
+func TestEmitNoFindingsJSON(t *testing.T) {
+	var buf bytes.Buffer
+
+	err := emitNoFindings(&buf, "http://example.com", []string{"high", "critical"}, "json", 3*time.Second)
+	if err != nil {
+		t.Fatalf("emitNoFindings() error = %v", err)
+	}
+
+	var report scanJSONReport
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("failed to decode json output: %v", err)
+	}
+
+	if report.Target != "http://example.com" {
+		t.Fatalf("expected target to be encoded, got %q", report.Target)
+	}
+	if report.FindingCount != 0 {
+		t.Fatalf("expected zero findings, got %d", report.FindingCount)
+	}
+	if report.AIUsed {
+		t.Fatalf("expected AIUsed to be false")
+	}
+	if report.AIStatus != "not_used" {
+		t.Fatalf("expected AIStatus=not_used, got %q", report.AIStatus)
+	}
+	if report.DurationSeconds != 3 {
+		t.Fatalf("expected duration_seconds=3, got %d", report.DurationSeconds)
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    time.Duration
+		expected string
+	}{
+		{name: "subsecond", input: 500 * time.Millisecond, expected: "<1s"},
+		{name: "seconds", input: 3*time.Second + 200*time.Millisecond, expected: "3s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatDuration(tt.input); got != tt.expected {
+				t.Fatalf("formatDuration(%v) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTrimForAI(t *testing.T) {
+	value := strings.Repeat("a", 20)
+	got := trimForAI(value, 10)
+	if !strings.Contains(got, "[TRUNCATED]") {
+		t.Fatalf("expected truncated marker, got %q", got)
+	}
+
+	short := trimForAI("abc", 10)
+	if short != "abc" {
+		t.Fatalf("expected unmodified short value, got %q", short)
 	}
 }
 
