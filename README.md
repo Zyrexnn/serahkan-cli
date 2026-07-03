@@ -1,19 +1,19 @@
 # serahkan-cli
 
-`serahkan-cli` adalah CLI Go untuk menjalankan scan Nuclei, memfilter temuan, lalu meminta analisis defensif dari local LLM.
+`serahkan-cli` is a Go CLI for running Nuclei scans, filtering findings, and requesting defensive analysis from a local LLM.
 
-## Fitur
+## Features
 
-- `scan` untuk menjalankan Nuclei dan analisis AI
-- `scan --output json` untuk output machine-readable
-- `doctor` untuk cek dependency lokal
-- `config` untuk menyimpan konfigurasi AI secara persisten
-- `version` untuk metadata build/runtime
+- `scan` to run Nuclei and AI analysis
+- `scan --output json` for machine-readable output
+- `doctor` to check local dependencies
+- `config` to persist AI configuration
+- `version` to show build and runtime metadata
 
-## Kebutuhan
+## Requirements
 
-- `nuclei` atau `nuclei.exe` tersedia di workspace atau `PATH`
-- endpoint AI lokal aktif, default: `http://127.0.0.1:1234/v1/chat/completions`
+- `nuclei` or `nuclei.exe` must be available in the workspace or on `PATH`
+- a local AI endpoint must be running, default: `http://127.0.0.1:1234/v1/chat/completions`
 
 ## Build
 
@@ -25,14 +25,14 @@ go run . doctor
 go run . scan --target http://example.com
 ```
 
-Build biasa:
+Standard build:
 
 ```powershell
 go build -o serahkan.exe .
 .\serahkan.exe version
 ```
 
-Build dengan metadata:
+Build with metadata:
 
 ```powershell
 $env:SERAHKAN_VERSION="0.1.0"
@@ -41,22 +41,22 @@ $env:SERAHKAN_COMMIT="abc1234"
 .\serahkan.exe version
 ```
 
-## Konfigurasi
+## Configuration
 
-Precedence konfigurasi:
+Configuration precedence:
 
 ```text
 flag > env > config file > default
 ```
 
-Environment variable yang didukung:
+Supported environment variables:
 
 - `SERAHKAN_AI_ENDPOINT`
 - `SERAHKAN_AI_MODEL`
 - `SERAHKAN_AI_API_KEY`
-- `SERAHKAN_CONFIG` untuk override path config file
+- `SERAHKAN_CONFIG` to override the config file path
 
-Contoh config persisten:
+Persistent config example:
 
 ```powershell
 go run . config set ai.endpoint http://127.0.0.1:1234/v1/chat/completions
@@ -68,7 +68,7 @@ go run . config view
 
 ### `scan`
 
-Contoh:
+Examples:
 
 ```powershell
 go run . scan --target http://example.com
@@ -77,21 +77,21 @@ go run . scan --target http://example.com --output json
 go run . scan --target http://example.com --ai-model llama-3.2-3b-instruct-uncensored
 ```
 
-Flag utama:
+Main flags:
 
 - `--target`, `-t` target URL
-- `--severity` daftar severity dipisah koma
-- `--timeout` timeout request Nuclei
-- `--retries` retry scan Nuclei
-- `--no-interactsh` disable template OOB
-- `--ai-endpoint` override endpoint AI
-- `--ai-model` override model AI
-- `--ai-api-key` override API key AI
-- `--ai-timeout` timeout AI
-- `--limit` batas jumlah finding yang dianalisis AI
+- `--severity` comma-separated severity list
+- `--timeout` Nuclei request timeout
+- `--retries` Nuclei scan retries
+- `--no-interactsh` disable OOB templates
+- `--ai-endpoint` override AI endpoint
+- `--ai-model` override AI model
+- `--ai-api-key` override AI API key
+- `--ai-timeout` AI timeout
+- `--limit` maximum number of findings sent for AI analysis
 - `--output text|json`
 
-Mode `text` menampilkan laporan ASCII. Mode `json` mengeluarkan objek JSON dengan target, severity, jumlah temuan, status AI, analisis, dan daftar finding.
+`text` mode prints an ASCII report. `json` mode returns a JSON object containing the target, severity, finding count, AI status, analysis, and finding list.
 
 ### `doctor`
 
@@ -99,10 +99,10 @@ Mode `text` menampilkan laporan ASCII. Mode `json` mengeluarkan objek JSON denga
 go run . doctor
 ```
 
-`doctor` memeriksa:
+`doctor` checks:
 
-- resolusi binary `nuclei`
-- reachability endpoint AI aktif
+- `nuclei` binary resolution
+- reachability of the active AI endpoint
 
 ### `config`
 
@@ -113,7 +113,7 @@ go run . config set ai.model qwen2.5-coder-1.5b-instruct
 go run . config unset ai.api_key
 ```
 
-Key yang didukung:
+Supported keys:
 
 - `ai.endpoint`
 - `ai.model`
@@ -125,10 +125,10 @@ Key yang didukung:
 go run . version
 ```
 
-Menampilkan:
+Shows:
 
-- versi aplikasi
-- commit build
-- tanggal build
-- versi Go
+- application version
+- build commit
+- build date
+- Go version
 - OS/arch
