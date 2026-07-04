@@ -146,6 +146,7 @@ func TestValidateScanProfile(t *testing.T) {
 		{input: "balanced", wantErr: false},
 		{input: "deep", wantErr: false},
 		{input: "web-full", wantErr: false},
+		{input: "benchmark-web", wantErr: false},
 		{input: "brutal-aggressive", wantErr: false},
 		{input: "turbo", wantErr: true},
 	}
@@ -158,10 +159,33 @@ func TestValidateScanProfile(t *testing.T) {
 	}
 }
 
+func TestValidateFocus(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{input: "", wantErr: false},
+		{input: "exposures", wantErr: false},
+		{input: "web-vulns", wantErr: false},
+		{input: "fuzz", wantErr: false},
+		{input: "misconfig", wantErr: false},
+		{input: "cves", wantErr: false},
+		{input: "random", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		err := validateFocus(tt.input)
+		if (err != nil) != tt.wantErr {
+			t.Fatalf("validateFocus(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
+		}
+	}
+}
+
 func TestApplyScanProfile(t *testing.T) {
 	makeCommand := func() *cobra.Command {
 		cmd := &cobra.Command{Use: "scan"}
 		cmd.Flags().String("severity", "", "")
+		cmd.Flags().String("focus", "", "")
 		cmd.Flags().Int("timeout", 0, "")
 		cmd.Flags().Int("scan-timeout", 0, "")
 		cmd.Flags().Int("retries", 0, "")
@@ -273,12 +297,53 @@ func TestApplyScanProfile(t *testing.T) {
 			t.Fatalf("expected brutalAggressive marker to be active")
 		}
 	})
+
+	t.Run("benchmark-web profile enables benchmark defaults", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.profile = "benchmark-web"
+
+		cmd := makeCommand()
+		applyScanProfile(cmd)
+
+		if scanOptions.severity != "info,low,medium,high,critical" {
+			t.Fatalf("expected benchmark-web severity coverage, got %q", scanOptions.severity)
+		}
+		if scanOptions.focus != "web-vulns" {
+			t.Fatalf("expected benchmark-web focus to default to web-vulns, got %q", scanOptions.focus)
+		}
+		if !scanOptions.noInteractsh || !scanOptions.includeHTTP || !scanOptions.enableDAST || !scanOptions.skipAI {
+			t.Fatalf("expected benchmark-web to enable benchmark web scan defaults")
+		}
+		if !containsString(scanOptions.tags, "xss") || !containsString(scanOptions.tags, "sqli") {
+			t.Fatalf("expected benchmark-web to apply web-vulns focus tags")
+		}
+		if !scanOptions.benchmarkWeb {
+			t.Fatalf("expected benchmarkWeb marker to be active")
+		}
+	})
+
+	t.Run("focus fuzz enables dast and fuzz filters", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.profile = "balanced"
+		scanOptions.focus = "fuzz"
+
+		cmd := makeCommand()
+		applyScanProfile(cmd)
+
+		if !scanOptions.enableDAST {
+			t.Fatalf("expected fuzz focus to enable DAST")
+		}
+		if !containsString(scanOptions.includeDefaultIgnoredTags, "fuzz") || !containsString(scanOptions.tags, "fuzz") {
+			t.Fatalf("expected fuzz focus to include fuzz tag controls")
+		}
+	})
 }
 
 func zeroScanOptions() struct {
 	target                    string
 	severity                  string
 	profile                   string
+	focus                     string
 	timeout                   int
 	scanTimeout               int
 	retries                   int
@@ -292,6 +357,8 @@ func zeroScanOptions() struct {
 	automaticScan             bool
 	includeDefaultIgnoredTags []string
 	brutalAggressive          bool
+	benchmarkWeb              bool
+	parityMode                bool
 	legacyCompatible          bool
 	showNucleiCommand         bool
 	headers                   []string
@@ -314,6 +381,7 @@ func zeroScanOptions() struct {
 		target                    string
 		severity                  string
 		profile                   string
+		focus                     string
 		timeout                   int
 		scanTimeout               int
 		retries                   int
@@ -327,6 +395,8 @@ func zeroScanOptions() struct {
 		automaticScan             bool
 		includeDefaultIgnoredTags []string
 		brutalAggressive          bool
+		benchmarkWeb              bool
+		parityMode                bool
 		legacyCompatible          bool
 		showNucleiCommand         bool
 		headers                   []string
@@ -385,6 +455,29 @@ func TestEmitNoFindingsJSON(t *testing.T) {
 	}
 	if len(report.SkippedReasons) != 1 {
 		t.Fatalf("expected skipped reason in report")
+	}
+	if report.AuthMode != "none" {
+		t.Fatalf("expected auth_mode none, got %q", report.AuthMode)
+	}
+	if report.NucleiExecution == nil {
+		t.Fatalf("expected nuclei execution metadata")
+	}
+}
+
+func TestAuthMode(t *testing.T) {
+	scanOptions = zeroScanOptions()
+	if got := authMode(); got != "none" {
+		t.Fatalf("expected none, got %q", got)
+	}
+
+	scanOptions.cookie = "sid=abc"
+	if got := authMode(); got != "cookie" {
+		t.Fatalf("expected cookie, got %q", got)
+	}
+
+	scanOptions.headers = []string{"Authorization: Bearer token"}
+	if got := authMode(); got != "mixed" {
+		t.Fatalf("expected mixed, got %q", got)
 	}
 }
 

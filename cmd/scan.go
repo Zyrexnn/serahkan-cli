@@ -20,6 +20,7 @@ var scanOptions struct {
 	target                    string
 	severity                  string
 	profile                   string
+	focus                     string
 	timeout                   int
 	scanTimeout               int
 	retries                   int
@@ -33,6 +34,8 @@ var scanOptions struct {
 	automaticScan             bool
 	includeDefaultIgnoredTags []string
 	brutalAggressive          bool
+	benchmarkWeb              bool
+	parityMode                bool
 	legacyCompatible          bool
 	showNucleiCommand         bool
 	headers                   []string
@@ -70,6 +73,9 @@ type scanJSONReport struct {
 	FilteredFindings   int                    `json:"filtered_findings"`
 	SkippedReasons     []string               `json:"skipped_reasons,omitempty"`
 	Profile            string                 `json:"profile"`
+	Focus              string                 `json:"focus,omitempty"`
+	AuthMode           string                 `json:"auth_mode"`
+	NucleiExecution    map[string]interface{} `json:"nuclei_execution,omitempty"`
 	NucleiCommand      []string               `json:"nuclei_command,omitempty"`
 	AIUsed             bool                   `json:"ai_used"`
 	AIStatus           string                 `json:"ai_status"`
@@ -99,6 +105,9 @@ var scanCmd = &cobra.Command{
 		if err := validateScanProfile(scanOptions.profile); err != nil {
 			return err
 		}
+		if err := validateFocus(scanOptions.focus); err != nil {
+			return err
+		}
 
 		allowedSeverities := parseSeverityFlag(scanOptions.severity)
 		if scanOptions.includeLowInfo {
@@ -116,6 +125,7 @@ var scanCmd = &cobra.Command{
 			NoInteractsh:              scanOptions.noInteractsh,
 			Concurrency:               0,
 			RateLimit:                 0,
+			ParityMode:                scanOptions.parityMode,
 			IncludeHTTP:               scanOptions.includeHTTP,
 			EnableHeadless:            scanOptions.enableHeadless,
 			EnableDAST:                scanOptions.enableDAST,
@@ -237,7 +247,8 @@ func init() {
 	rootCmd.AddCommand(scanCmd)
 
 	scanCmd.Flags().StringVarP(&scanOptions.target, "target", "t", "", "Target URL to scan (e.g. http://example.com)")
-	scanCmd.Flags().StringVar(&scanOptions.profile, "profile", "balanced", "Scan profile: fast, balanced, deep, web-full, or brutal-aggressive")
+	scanCmd.Flags().StringVar(&scanOptions.profile, "profile", "balanced", "Scan profile: fast, balanced, deep, web-full, benchmark-web, or brutal-aggressive")
+	scanCmd.Flags().StringVar(&scanOptions.focus, "focus", "", "Template focus preset: exposures, web-vulns, fuzz, misconfig, or cves")
 	scanCmd.Flags().StringVar(&scanOptions.severity, "severity", "medium,high,critical", "Severity levels to include")
 	scanCmd.Flags().IntVar(&scanOptions.timeout, "timeout", 10, "Timeout in seconds per Nuclei HTTP request")
 	scanCmd.Flags().IntVar(&scanOptions.scanTimeout, "scan-timeout", 120, "Maximum duration in seconds for the Nuclei scan phase (0 disables the limit)")
@@ -252,6 +263,7 @@ func init() {
 	scanCmd.Flags().BoolVar(&scanOptions.automaticScan, "automatic-scan", false, "Enable Nuclei automatic technology-based web scan (-as)")
 	scanCmd.Flags().StringSliceVar(&scanOptions.includeDefaultIgnoredTags, "include-default-ignored-tags", nil, "Run tags normally ignored by Nuclei, such as fuzz or bruteforce")
 	scanCmd.Flags().BoolVar(&scanOptions.legacyCompatible, "legacy-compatible", false, "Use settings close to the original wrapper behavior")
+	scanCmd.Flags().BoolVar(&scanOptions.parityMode, "parity-mode", false, "Use minimal wrapper flags to compare behavior with raw Nuclei")
 	scanCmd.Flags().BoolVar(&scanOptions.showNucleiCommand, "show-nuclei-command", false, "Print the final Nuclei command used by the wrapper")
 	scanCmd.Flags().StringArrayVar(&scanOptions.headers, "header", nil, "Custom header to include in Nuclei requests, repeatable (Header: value)")
 	scanCmd.Flags().StringVar(&scanOptions.cookie, "cookie", "", "Cookie header value to include in Nuclei requests")
@@ -305,10 +317,19 @@ func validateOutputMode(value string) error {
 
 func validateScanProfile(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "fast", "balanced", "deep", "web-full", "brutal-aggressive":
+	case "fast", "balanced", "deep", "web-full", "benchmark-web", "brutal-aggressive":
 		return nil
 	default:
-		return fmt.Errorf("invalid scan profile %q. Supported values: fast, balanced, deep, web-full, brutal-aggressive", value)
+		return fmt.Errorf("invalid scan profile %q. Supported values: fast, balanced, deep, web-full, benchmark-web, brutal-aggressive", value)
+	}
+}
+
+func validateFocus(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "exposures", "web-vulns", "fuzz", "misconfig", "cves":
+		return nil
+	default:
+		return fmt.Errorf("invalid focus %q. Supported values: exposures, web-vulns, fuzz, misconfig, cves", value)
 	}
 }
 
@@ -344,6 +365,7 @@ func applyScanProfile(cmd *cobra.Command) {
 		setBoolIfUnset("include-http", true, &scanOptions.includeHTTP)
 	}
 	scanOptions.brutalAggressive = false
+	scanOptions.benchmarkWeb = false
 
 	switch profile {
 	case "fast":
@@ -379,6 +401,20 @@ func applyScanProfile(cmd *cobra.Command) {
 		setSliceIfUnset("type", []string{"http", "headless", "javascript"}, &scanOptions.types)
 		setIntIfUnset("ai-timeout", 120, &scanOptions.aiTimeout)
 		setIntIfUnset("limit", 15, &scanOptions.limit)
+	case "benchmark-web":
+		scanOptions.benchmarkWeb = true
+		setStringIfUnset("severity", "info,low,medium,high,critical", &scanOptions.severity)
+		setStringIfUnset("focus", "web-vulns", &scanOptions.focus)
+		setIntIfUnset("timeout", 25, &scanOptions.timeout)
+		setIntIfUnset("scan-timeout", 300, &scanOptions.scanTimeout)
+		setIntIfUnset("retries", 1, &scanOptions.retries)
+		setBoolIfUnset("no-interactsh", true, &scanOptions.noInteractsh)
+		setBoolIfUnset("skip-ai", true, &scanOptions.skipAI)
+		setBoolIfUnset("include-http", true, &scanOptions.includeHTTP)
+		setBoolIfUnset("enable-dast", true, &scanOptions.enableDAST)
+		setSliceIfUnset("include-default-ignored-tags", []string{"fuzz"}, &scanOptions.includeDefaultIgnoredTags)
+		setSliceIfUnset("type", []string{"http"}, &scanOptions.types)
+		setIntIfUnset("limit", 20, &scanOptions.limit)
 	case "brutal-aggressive":
 		scanOptions.brutalAggressive = true
 		setStringIfUnset("severity", "info,low,medium,high,critical", &scanOptions.severity)
@@ -410,6 +446,41 @@ func applyScanProfile(cmd *cobra.Command) {
 	}
 	if scanOptions.includeLowInfo {
 		scanOptions.severity = "info,low,medium,high,critical"
+	}
+	applyFocusPreset(cmd)
+}
+
+func applyFocusPreset(cmd *cobra.Command) {
+	switch strings.ToLower(strings.TrimSpace(scanOptions.focus)) {
+	case "exposures":
+		appendSliceIfUnset(cmd, "templates", []string{"http/exposures"}, &scanOptions.templates)
+	case "web-vulns":
+		appendSliceIfUnset(cmd, "tags", []string{"xss", "sqli", "lfi", "rfi", "ssrf", "ssti", "redirect"}, &scanOptions.tags)
+	case "fuzz":
+		if !cmd.Flags().Changed("enable-dast") {
+			scanOptions.enableDAST = true
+		}
+		appendSliceIfUnset(cmd, "include-default-ignored-tags", []string{"fuzz"}, &scanOptions.includeDefaultIgnoredTags)
+		appendSliceIfUnset(cmd, "tags", []string{"fuzz"}, &scanOptions.tags)
+	case "misconfig":
+		appendSliceIfUnset(cmd, "tags", []string{"misconfig", "exposure", "config"}, &scanOptions.tags)
+	case "cves":
+		appendSliceIfUnset(cmd, "templates", []string{"http/cves"}, &scanOptions.templates)
+	}
+}
+
+func appendSliceIfUnset(cmd *cobra.Command, flagName string, values []string, target *[]string) {
+	if cmd.Flags().Changed(flagName) {
+		return
+	}
+	existing := map[string]struct{}{}
+	for _, value := range *target {
+		existing[value] = struct{}{}
+	}
+	for _, value := range values {
+		if _, ok := existing[value]; !ok {
+			*target = append(*target, value)
+		}
 	}
 }
 
@@ -444,6 +515,9 @@ func emitJSONReport(out io.Writer, target string, severities []string, findings 
 		FilteredFindings:   scanResult.FilteredBySeverity,
 		SkippedReasons:     diagnostics,
 		Profile:            strings.ToLower(strings.TrimSpace(scanOptions.profile)),
+		Focus:              strings.ToLower(strings.TrimSpace(scanOptions.focus)),
+		AuthMode:           authMode(),
+		NucleiExecution:    nucleiExecution(scanResult),
 		NucleiCommand:      commandForOutput(scanResult.Command),
 		AIUsed:             aiUsed,
 		AIStatus:           aiStatus,
@@ -483,10 +557,67 @@ func buildScanDiagnostics(severities []string) []string {
 	if scanOptions.brutalAggressive {
 		reasons = append(reasons, "coverage-heavy mode is active with elevated timeout, concurrency, rate-limit, DAST, headless, and OOB scanning")
 	}
+	if scanOptions.benchmarkWeb {
+		reasons = append(reasons, "benchmark-web mode is active for public vulnerable demo targets and web vulnerability templates")
+	}
+	if scanOptions.parityMode {
+		reasons = append(reasons, "parity mode is active with minimal wrapper defaults for raw Nuclei comparison")
+	}
+	if focus := strings.TrimSpace(scanOptions.focus); focus != "" {
+		reasons = append(reasons, fmt.Sprintf("focus preset %q is active", focus))
+	}
 	if scanOptions.scanTimeout > 0 {
 		reasons = append(reasons, fmt.Sprintf("Nuclei scan phase is capped at %ds", scanOptions.scanTimeout))
 	}
 	return reasons
+}
+
+func authMode() string {
+	hasHeader := len(scanOptions.headers) > 0
+	hasCookie := strings.TrimSpace(scanOptions.cookie) != ""
+	hasCookieFile := strings.TrimSpace(scanOptions.cookieFile) != ""
+	count := 0
+	for _, enabled := range []bool{hasHeader, hasCookie, hasCookieFile} {
+		if enabled {
+			count++
+		}
+	}
+	if count > 1 {
+		return "mixed"
+	}
+	if hasHeader {
+		return "header"
+	}
+	if hasCookie {
+		return "cookie"
+	}
+	if hasCookieFile {
+		return "cookie_file"
+	}
+	return "none"
+}
+
+func nucleiExecution(scanResult runner.Result) map[string]interface{} {
+	execution := map[string]interface{}{
+		"parity_mode":                  scanOptions.parityMode,
+		"automatic_scan":               scanOptions.automaticScan,
+		"include_http":                 scanOptions.includeHTTP,
+		"headless":                     scanOptions.enableHeadless,
+		"dast":                         scanOptions.enableDAST,
+		"oob":                          !scanOptions.noInteractsh,
+		"types":                        scanOptions.types,
+		"tags":                         scanOptions.tags,
+		"exclude_tags":                 scanOptions.excludeTags,
+		"templates":                    scanOptions.templates,
+		"workflows":                    scanOptions.workflows,
+		"include_default_ignored_tags": scanOptions.includeDefaultIgnoredTags,
+		"total_lines":                  scanResult.TotalLines,
+		"malformed_lines":              scanResult.MalformedLines,
+	}
+	if scanResult.Stderr != "" {
+		execution["stderr"] = scanResult.Stderr
+	}
+	return execution
 }
 
 func containsSeverity(severities []string, target string) bool {

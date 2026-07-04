@@ -23,6 +23,7 @@ type Options struct {
 	NoInteractsh              bool
 	Concurrency               int
 	RateLimit                 int
+	ParityMode                bool
 	IncludeHTTP               bool
 	EnableHeadless            bool
 	EnableDAST                bool
@@ -178,18 +179,23 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		"-severity", strings.Join(allowedSeverities, ","),
 		"-timeout", fmt.Sprint(options.TimeoutSeconds),
 		"-retries", fmt.Sprint(options.Retries),
-		"-c", fmt.Sprint(defaultInt(options.Concurrency, 150)),
-		"-rl", fmt.Sprint(defaultInt(options.RateLimit, 500)),
 		"-leave-default-ports",
+	}
+
+	if !options.ParityMode {
+		args = append(args,
+			"-c", fmt.Sprint(defaultInt(options.Concurrency, 150)),
+			"-rl", fmt.Sprint(defaultInt(options.RateLimit, 500)),
+		)
 	}
 
 	if options.IncludeHTTP {
 		args = append(args, "-irr")
-	} else {
+	} else if !options.ParityMode {
 		args = append(args, "-omit-raw")
 	}
 
-	if supportsNucleiFlag(nucleiPath, "-no-banner") {
+	if !options.ParityMode && supportsNucleiFlag(nucleiPath, "-no-banner") {
 		args = append(args, "-no-banner")
 	}
 

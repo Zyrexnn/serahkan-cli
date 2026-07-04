@@ -6,7 +6,7 @@
 
 - `scan` to run Nuclei and AI analysis
 - `scan --output json` for machine-readable output
-- `scan --profile fast|balanced|deep|web-full` for speed and coverage presets
+- `scan --profile fast|balanced|deep|web-full|benchmark-web|brutal-aggressive` for speed and coverage presets
 - `doctor` to check local dependencies
 - `config` to persist AI configuration
 - `version` to show build and runtime metadata
@@ -86,6 +86,16 @@ Profiles:
 - `balanced`: faster day-to-day default with AI enabled
 - `deep`: slower, broader scan with longer timeouts and AI enabled
 - `web-full`: broader web bug hunting mode with low/info severity, OOB, headless, DAST, and fuzz-tag inclusion
+- `benchmark-web`: opt-in profile for public vulnerable demo web apps, full severity, DAST, raw HTTP details, and web vulnerability tags
+- `brutal-aggressive`: maximum coverage profile with full severity, 600s scan cap, headless, DAST, OOB, ignored fuzz/bruteforce tags, and elevated throughput
+
+Focus presets:
+
+- `exposures`: runs exposure templates
+- `web-vulns`: runs common web vulnerability tags such as XSS, SQLi, LFI, RFI, SSRF, SSTI, and redirects
+- `fuzz`: enables DAST and fuzz templates
+- `misconfig`: runs misconfiguration and exposure tags
+- `cves`: runs HTTP CVE templates
 
 Examples:
 
@@ -95,7 +105,10 @@ go run . scan --target http://example.com --profile fast
 go run . scan --target http://example.com --profile balanced
 go run . scan --target http://example.com --profile deep
 go run . scan --target http://example.com --profile web-full
+go run . scan --target http://testphp.vulnweb.com/ --profile benchmark-web
+go run . scan --target http://example.com --profile brutal-aggressive --skip-ai
 go run . scan --target http://example.com --severity high,critical
+go run . scan --target http://example.com --focus web-vulns
 go run . scan --target http://example.com --skip-ai
 go run . scan --target http://example.com --include-http
 go run . scan --target http://example.com --scan-timeout 90
@@ -104,6 +117,7 @@ go run . scan --target http://example.com --enable-headless --enable-dast
 go run . scan --target http://example.com --header "Authorization: Bearer TOKEN"
 go run . scan --target http://example.com --cookie "session=abc123"
 go run . scan --target http://example.com --tags xss,sqli --type http,headless
+go run . scan --target http://example.com --parity-mode --show-nuclei-command --output json
 go run . scan --target http://example.com --output json
 go run . scan --target http://example.com --ai-model llama-3.2-3b-instruct-uncensored
 ```
@@ -111,7 +125,8 @@ go run . scan --target http://example.com --ai-model llama-3.2-3b-instruct-uncen
 Main flags:
 
 - `--target`, `-t` target URL
-- `--profile` scan preset: `fast`, `balanced`, `deep`, or `web-full`
+- `--profile` scan preset: `fast`, `balanced`, `deep`, `web-full`, `benchmark-web`, or `brutal-aggressive`
+- `--focus` template focus preset: `exposures`, `web-vulns`, `fuzz`, `misconfig`, or `cves`
 - `--severity` comma-separated severity list
 - `--include-low-info` include `info` and `low` severities
 - `--timeout` Nuclei request timeout
@@ -132,6 +147,7 @@ Main flags:
 - `--templates`, `--workflows` run specific Nuclei templates or workflows
 - `--type` select Nuclei protocol types, such as `http`, `headless`, or `javascript`
 - `--show-nuclei-command` print the final Nuclei command used by the wrapper
+- `--parity-mode` use minimal wrapper defaults for raw Nuclei comparison
 - `--legacy-compatible` use settings close to the original wrapper behavior
 - `--ai-endpoint` override AI endpoint
 - `--ai-model` override AI model
@@ -140,7 +156,7 @@ Main flags:
 - `--limit` maximum number of findings sent for AI analysis
 - `--output text|json`
 
-`text` mode prints an ASCII report. `json` mode returns a JSON object containing the target, severity, raw finding count, filtered finding count, active scan profile, AI status, analysis, and finding list.
+`text` mode prints an ASCII report. `json` mode returns a JSON object containing the target, severity, raw finding count, filtered finding count, active scan profile, focus preset, auth mode, Nuclei execution metadata, AI status, analysis, and finding list.
 
 When no findings match the current configuration, the output explains active limitations such as disabled OOB, disabled headless/DAST, unauthenticated scan state, severity filtering, ignored Nuclei tags, and scan timeout caps.
 
@@ -158,6 +174,15 @@ go run . scan --target http://example.com --profile deep
 
 # Full web bug hunting mode
 go run . scan --target http://example.com --profile web-full
+
+# Benchmark vulnerable demo web app scan
+go run . scan --target http://testphp.vulnweb.com/ --profile benchmark-web --skip-ai --output json
+
+# Maximum coverage scan for authorized targets
+go run . scan --target http://example.com --profile brutal-aggressive --skip-ai --output json
+
+# Raw Nuclei parity check when wrapper output is unexpected
+go run . scan --target http://example.com --parity-mode --show-nuclei-command --output json
 
 # Authenticated web scan using a session cookie
 go run . scan --target http://example.com --profile web-full --cookie "session=abc123"
