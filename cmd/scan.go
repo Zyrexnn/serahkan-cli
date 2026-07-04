@@ -101,6 +101,10 @@ var scanCmd = &cobra.Command{
 
 		scanOptions.target = sanitizeTarget(scanOptions.target)
 
+		if cmd.Flags().Changed("ai-endpoint") {
+			scanOptions.skipAI = false
+		}
+
 		if err := validateTarget(scanOptions.target); err != nil {
 			return err
 		}
@@ -116,6 +120,9 @@ var scanCmd = &cobra.Command{
 
 		allowedSeverities := parseSeverityFlag(scanOptions.severity)
 		if scanOptions.includeLowInfo {
+			allowedSeverities = []string{"info", "low", "medium", "high", "critical"}
+		}
+		if cmd.Flags().Changed("ai-endpoint") {
 			allowedSeverities = []string{"info", "low", "medium", "high", "critical"}
 		}
 		diagnostics := buildScanDiagnostics(allowedSeverities, 0)
