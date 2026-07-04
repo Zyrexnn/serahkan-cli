@@ -32,6 +32,7 @@ var scanOptions struct {
 	enableDAST                bool
 	automaticScan             bool
 	includeDefaultIgnoredTags []string
+	brutalAggressive          bool
 	legacyCompatible          bool
 	showNucleiCommand         bool
 	headers                   []string
@@ -113,6 +114,8 @@ var scanCmd = &cobra.Command{
 			Retries:                   scanOptions.retries,
 			Verbose:                   scanOptions.verbose,
 			NoInteractsh:              scanOptions.noInteractsh,
+			Concurrency:               0,
+			RateLimit:                 0,
 			IncludeHTTP:               scanOptions.includeHTTP,
 			EnableHeadless:            scanOptions.enableHeadless,
 			EnableDAST:                scanOptions.enableDAST,
@@ -129,6 +132,10 @@ var scanCmd = &cobra.Command{
 			ShowCommand:               scanOptions.showNucleiCommand,
 			LegacyCompatible:          scanOptions.legacyCompatible,
 			LogWriter:                 logOut,
+		}
+		if scanOptions.brutalAggressive {
+			runOptions.Concurrency = 300
+			runOptions.RateLimit = 800
 		}
 
 		scanCtx := cmd.Context()
@@ -230,7 +237,7 @@ func init() {
 	rootCmd.AddCommand(scanCmd)
 
 	scanCmd.Flags().StringVarP(&scanOptions.target, "target", "t", "", "Target URL to scan (e.g. http://example.com)")
-	scanCmd.Flags().StringVar(&scanOptions.profile, "profile", "balanced", "Scan profile: fast, balanced, deep, or web-full")
+	scanCmd.Flags().StringVar(&scanOptions.profile, "profile", "balanced", "Scan profile: fast, balanced, deep, web-full, or brutal-aggressive")
 	scanCmd.Flags().StringVar(&scanOptions.severity, "severity", "medium,high,critical", "Severity levels to include")
 	scanCmd.Flags().IntVar(&scanOptions.timeout, "timeout", 10, "Timeout in seconds per Nuclei HTTP request")
 	scanCmd.Flags().IntVar(&scanOptions.scanTimeout, "scan-timeout", 120, "Maximum duration in seconds for the Nuclei scan phase (0 disables the limit)")
@@ -298,10 +305,10 @@ func validateOutputMode(value string) error {
 
 func validateScanProfile(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "fast", "balanced", "deep", "web-full":
+	case "fast", "balanced", "deep", "web-full", "brutal-aggressive":
 		return nil
 	default:
-		return fmt.Errorf("invalid scan profile %q. Supported values: fast, balanced, deep, web-full", value)
+		return fmt.Errorf("invalid scan profile %q. Supported values: fast, balanced, deep, web-full, brutal-aggressive", value)
 	}
 }
 
@@ -336,6 +343,7 @@ func applyScanProfile(cmd *cobra.Command) {
 		profile = "deep"
 		setBoolIfUnset("include-http", true, &scanOptions.includeHTTP)
 	}
+	scanOptions.brutalAggressive = false
 
 	switch profile {
 	case "fast":
@@ -371,6 +379,20 @@ func applyScanProfile(cmd *cobra.Command) {
 		setSliceIfUnset("type", []string{"http", "headless", "javascript"}, &scanOptions.types)
 		setIntIfUnset("ai-timeout", 120, &scanOptions.aiTimeout)
 		setIntIfUnset("limit", 15, &scanOptions.limit)
+	case "brutal-aggressive":
+		scanOptions.brutalAggressive = true
+		setStringIfUnset("severity", "info,low,medium,high,critical", &scanOptions.severity)
+		setIntIfUnset("timeout", 45, &scanOptions.timeout)
+		setIntIfUnset("scan-timeout", 600, &scanOptions.scanTimeout)
+		setIntIfUnset("retries", 2, &scanOptions.retries)
+		setBoolIfUnset("no-interactsh", false, &scanOptions.noInteractsh)
+		setBoolIfUnset("skip-ai", true, &scanOptions.skipAI)
+		setBoolIfUnset("include-http", true, &scanOptions.includeHTTP)
+		setBoolIfUnset("enable-headless", true, &scanOptions.enableHeadless)
+		setBoolIfUnset("enable-dast", true, &scanOptions.enableDAST)
+		setSliceIfUnset("include-default-ignored-tags", []string{"fuzz", "bruteforce"}, &scanOptions.includeDefaultIgnoredTags)
+		setSliceIfUnset("type", []string{"http", "headless", "javascript", "dns"}, &scanOptions.types)
+		setIntIfUnset("limit", 25, &scanOptions.limit)
 	default:
 		setStringIfUnset("severity", "medium,high,critical", &scanOptions.severity)
 		setIntIfUnset("timeout", 10, &scanOptions.timeout)
@@ -457,6 +479,9 @@ func buildScanDiagnostics(severities []string) []string {
 	}
 	if len(scanOptions.includeDefaultIgnoredTags) == 0 {
 		reasons = append(reasons, "Nuclei default ignored tags such as fuzz/bruteforce remain excluded")
+	}
+	if scanOptions.brutalAggressive {
+		reasons = append(reasons, "coverage-heavy mode is active with elevated timeout, concurrency, rate-limit, DAST, headless, and OOB scanning")
 	}
 	if scanOptions.scanTimeout > 0 {
 		reasons = append(reasons, fmt.Sprintf("Nuclei scan phase is capped at %ds", scanOptions.scanTimeout))

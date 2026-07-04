@@ -146,6 +146,7 @@ func TestValidateScanProfile(t *testing.T) {
 		{input: "balanced", wantErr: false},
 		{input: "deep", wantErr: false},
 		{input: "web-full", wantErr: false},
+		{input: "brutal-aggressive", wantErr: false},
 		{input: "turbo", wantErr: true},
 	}
 
@@ -245,6 +246,33 @@ func TestApplyScanProfile(t *testing.T) {
 			t.Fatalf("expected web-full to include fuzz ignored tag")
 		}
 	})
+
+	t.Run("brutal-aggressive profile enables maximum coverage defaults", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.profile = "brutal-aggressive"
+
+		cmd := makeCommand()
+		applyScanProfile(cmd)
+
+		if scanOptions.severity != "info,low,medium,high,critical" {
+			t.Fatalf("expected brutal-aggressive severity coverage, got %q", scanOptions.severity)
+		}
+		if scanOptions.timeout != 45 || scanOptions.scanTimeout != 600 || scanOptions.retries != 2 {
+			t.Fatalf("unexpected brutal-aggressive timing values: timeout=%d scan-timeout=%d retries=%d", scanOptions.timeout, scanOptions.scanTimeout, scanOptions.retries)
+		}
+		if scanOptions.noInteractsh || !scanOptions.includeHTTP || !scanOptions.enableHeadless || !scanOptions.enableDAST || !scanOptions.skipAI {
+			t.Fatalf("expected brutal-aggressive to enable OOB, HTTP details, headless, DAST, and skip-ai")
+		}
+		if !containsString(scanOptions.includeDefaultIgnoredTags, "fuzz") || !containsString(scanOptions.includeDefaultIgnoredTags, "bruteforce") {
+			t.Fatalf("expected brutal-aggressive to include fuzz and bruteforce ignored tags")
+		}
+		if !containsString(scanOptions.types, "http") || !containsString(scanOptions.types, "dns") {
+			t.Fatalf("expected brutal-aggressive to load http/headless/javascript/dns types")
+		}
+		if !scanOptions.brutalAggressive {
+			t.Fatalf("expected brutalAggressive marker to be active")
+		}
+	})
 }
 
 func zeroScanOptions() struct {
@@ -263,6 +291,7 @@ func zeroScanOptions() struct {
 	enableDAST                bool
 	automaticScan             bool
 	includeDefaultIgnoredTags []string
+	brutalAggressive          bool
 	legacyCompatible          bool
 	showNucleiCommand         bool
 	headers                   []string
@@ -297,6 +326,7 @@ func zeroScanOptions() struct {
 		enableDAST                bool
 		automaticScan             bool
 		includeDefaultIgnoredTags []string
+		brutalAggressive          bool
 		legacyCompatible          bool
 		showNucleiCommand         bool
 		headers                   []string
