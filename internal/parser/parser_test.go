@@ -183,6 +183,60 @@ func TestReaderErrorPropagation(t *testing.T) {
 	}
 }
 
+func TestWAFBlockedFindingDetection(t *testing.T) {
+	inputJSONL := `{"template-id":"xss","name":"XSS Blocked","severity":"high","host":"example.com","matched-at":"http://example.com/","response":"Error 1015: You are being rate limited","info":{"name":"XSS Blocked","severity":"high"}}
+{"template-id":"sqli","name":"SQL Injection","severity":"high","host":"example.com","matched-at":"http://example.com/db","response":"normal response body","info":{"name":"SQL Injection","severity":"high"}}
+{"template-id":"lfi","name":"LFI Found","severity":"critical","host":"example.com","matched-at":"http://example.com/file","response":"Attention Required! | Cloudflare","info":{"name":"LFI Found","severity":"critical"}}`
+
+	result, err := ParseAndFilterDetailed(bytes.NewBufferString(inputJSONL), []string{"high", "critical"}, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.WAFBlocked != 2 {
+		t.Fatalf("expected WAFBlocked=2, got %d", result.WAFBlocked)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("expected 1 non-WAF-blocked finding, got %d", len(result.Findings))
+	}
+	if result.Findings[0].TemplateID != "sqli" {
+		t.Errorf("expected remaining finding to be sqli, got %q", result.Findings[0].TemplateID)
+	}
+}
+
+func TestWAFBlockedVerboseLogging(t *testing.T) {
+	inputJSONL := `{"template-id":"xss","name":"XSS","severity":"high","response":"Access denied | freemodel.dev used Cloudflare to restrict access","info":{"name":"XSS","severity":"high"}}`
+	var logBuf bytes.Buffer
+
+	_, err := ParseAndFilterDetailed(bytes.NewBufferString(inputJSONL), []string{"high"}, Options{
+		Verbose:   true,
+		LogWriter: &logBuf,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !bytes.Contains(logBuf.Bytes(), []byte("[WARN] Skipping WAF-blocked finding")) {
+		t.Errorf("expected WAF warning in verbose log, got: %s", logBuf.String())
+	}
+}
+
+func TestNoFalseWAFPositives(t *testing.T) {
+	inputJSONL := `{"template-id":"xss","name":"XSS","severity":"high","response":"HTTP/1.1 200 OK\r\n\r\nNormal page content","info":{"name":"XSS","severity":"high"}}`
+
+	result, err := ParseAndFilterDetailed(bytes.NewBufferString(inputJSONL), []string{"high"}, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.WAFBlocked != 0 {
+		t.Fatalf("expected WAFBlocked=0 for normal response, got %d", result.WAFBlocked)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(result.Findings))
+	}
+}
+
 type errorReader struct{}
 
 func (e *errorReader) Read(p []byte) (n int, err error) {

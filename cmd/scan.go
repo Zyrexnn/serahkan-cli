@@ -24,6 +24,8 @@ var scanOptions struct {
 	timeout                   int
 	scanTimeout               int
 	retries                   int
+	concurrency               int
+	rateLimit                 int
 	verbose                   bool
 	noInteractsh              bool
 	includeHTTP               bool
@@ -71,6 +73,7 @@ type scanJSONReport struct {
 	FindingCount       int                    `json:"finding_count"`
 	RawFindings        int                    `json:"raw_findings"`
 	FilteredFindings   int                    `json:"filtered_findings"`
+	WAFBlocked         int                    `json:"waf_blocked"`
 	SkippedReasons     []string               `json:"skipped_reasons,omitempty"`
 	Profile            string                 `json:"profile"`
 	Focus              string                 `json:"focus,omitempty"`
@@ -96,6 +99,8 @@ var scanCmd = &cobra.Command{
 
 		applyScanProfile(cmd)
 
+		scanOptions.target = sanitizeTarget(scanOptions.target)
+
 		if err := validateTarget(scanOptions.target); err != nil {
 			return err
 		}
@@ -113,7 +118,7 @@ var scanCmd = &cobra.Command{
 		if scanOptions.includeLowInfo {
 			allowedSeverities = []string{"info", "low", "medium", "high", "critical"}
 		}
-		diagnostics := buildScanDiagnostics(allowedSeverities)
+		diagnostics := buildScanDiagnostics(allowedSeverities, 0)
 
 		fmt.Fprintf(logOut, "[SCAN] target=%s severities=%s\n", scanOptions.target, strings.Join(allowedSeverities, ","))
 		stopTicker := startScanTicker(logOut, scanOptions.target)
@@ -123,8 +128,8 @@ var scanCmd = &cobra.Command{
 			Retries:                   scanOptions.retries,
 			Verbose:                   scanOptions.verbose,
 			NoInteractsh:              scanOptions.noInteractsh,
-			Concurrency:               0,
-			RateLimit:                 0,
+			Concurrency:               scanOptions.concurrency,
+			RateLimit:                 scanOptions.rateLimit,
 			ParityMode:                scanOptions.parityMode,
 			IncludeHTTP:               scanOptions.includeHTTP,
 			EnableHeadless:            scanOptions.enableHeadless,
@@ -144,8 +149,12 @@ var scanCmd = &cobra.Command{
 			LogWriter:                 logOut,
 		}
 		if scanOptions.brutalAggressive {
-			runOptions.Concurrency = 300
-			runOptions.RateLimit = 800
+			if scanOptions.concurrency == 0 {
+				runOptions.Concurrency = 300
+			}
+			if scanOptions.rateLimit == 0 {
+				runOptions.RateLimit = 800
+			}
 		}
 
 		scanCtx := cmd.Context()
@@ -162,7 +171,11 @@ var scanCmd = &cobra.Command{
 		}
 		findings := scanResult.Findings
 
-		fmt.Fprintf(logOut, "[FILTER] nuclei output parsed raw=%d filtered=%d severity_skipped=%d malformed=%d\n", scanResult.RawFindings, len(findings), scanResult.FilteredBySeverity, scanResult.MalformedLines)
+		if scanResult.WAFBlocked > 0 {
+			diagnostics = buildScanDiagnostics(allowedSeverities, scanResult.WAFBlocked)
+		}
+
+		fmt.Fprintf(logOut, "[FILTER] nuclei output parsed raw=%d filtered=%d severity_skipped=%d waf_blocked=%d malformed=%d\n", scanResult.RawFindings, len(findings), scanResult.FilteredBySeverity, scanResult.WAFBlocked, scanResult.MalformedLines)
 
 		if len(findings) == 0 {
 			return emitNoFindings(out, scanOptions.target, allowedSeverities, scanOptions.output, time.Since(startedAt), scanResult, diagnostics)
@@ -253,6 +266,8 @@ func init() {
 	scanCmd.Flags().IntVar(&scanOptions.timeout, "timeout", 10, "Timeout in seconds per Nuclei HTTP request")
 	scanCmd.Flags().IntVar(&scanOptions.scanTimeout, "scan-timeout", 120, "Maximum duration in seconds for the Nuclei scan phase (0 disables the limit)")
 	scanCmd.Flags().IntVar(&scanOptions.retries, "retries", 0, "Number of retries for Nuclei scan")
+	scanCmd.Flags().IntVar(&scanOptions.concurrency, "concurrency", 0, "Nuclei connection concurrency (overrides profile defaults when explicitly set)")
+	scanCmd.Flags().IntVar(&scanOptions.rateLimit, "rate-limit", 0, "Nuclei requests per second rate limit (overrides profile defaults when explicitly set)")
 	scanCmd.Flags().BoolVarP(&scanOptions.verbose, "verbose", "v", false, "Show verbose debug logging on stderr")
 	scanCmd.Flags().BoolVar(&scanOptions.noInteractsh, "no-interactsh", true, "Disable out-of-band interaction templates (-ni). Reduces coverage but avoids interactsh dependency")
 	scanCmd.Flags().BoolVar(&scanOptions.includeHTTP, "include-http", false, "Include raw HTTP request/response data from Nuclei (-irr). Improves detail but increases scan time and payload size")
@@ -282,6 +297,31 @@ func init() {
 	scanCmd.Flags().StringVar(&scanOptions.output, "output", "text", "Output format: text or json")
 
 	_ = scanCmd.MarkFlagRequired("target")
+}
+
+func sanitizeTarget(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	changed := false
+	for key := range q {
+		lower := strings.ToLower(key)
+		if strings.Contains(lower, "cf_chl") || strings.Contains(lower, "challenge") || strings.Contains(lower, "__cf") || strings.Contains(lower, "fbclid") || strings.Contains(lower, "gclid") || strings.Contains(lower, "mc_eid") || strings.Contains(lower, "msclkid") || strings.Contains(lower, "trk") || strings.Contains(lower, "oly_enc_id") || strings.Contains(lower, "_hsenc") || strings.Contains(lower, "_hsm") || strings.Contains(lower, "ss_compile") || strings.Contains(lower, "vero_id") {
+			q.Del(key)
+			changed = true
+		}
+	}
+	if changed {
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+	return raw
 }
 
 func validateTarget(target string) error {
@@ -512,6 +552,7 @@ func emitJSONReport(out io.Writer, target string, severities []string, findings 
 		FindingCount:       len(findings),
 		RawFindings:        scanResult.RawFindings,
 		FilteredFindings:   scanResult.FilteredBySeverity,
+		WAFBlocked:         scanResult.WAFBlocked,
 		SkippedReasons:     diagnostics,
 		Profile:            strings.ToLower(strings.TrimSpace(scanOptions.profile)),
 		Focus:              strings.ToLower(strings.TrimSpace(scanOptions.focus)),
@@ -533,7 +574,7 @@ func emitJSONReport(out io.Writer, target string, severities []string, findings 
 	return encoder.Encode(report)
 }
 
-func buildScanDiagnostics(severities []string) []string {
+func buildScanDiagnostics(severities []string, wafBlocked int) []string {
 	reasons := []string{}
 	if !containsSeverity(severities, "info") || !containsSeverity(severities, "low") {
 		reasons = append(reasons, "low/info severity findings may be hidden; use --include-low-info for full visibility")
@@ -567,6 +608,9 @@ func buildScanDiagnostics(severities []string) []string {
 	}
 	if scanOptions.scanTimeout > 0 {
 		reasons = append(reasons, fmt.Sprintf("Nuclei scan phase is capped at %ds", scanOptions.scanTimeout))
+	}
+	if wafBlocked > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d finding(s) blocked by WAF/security filter and excluded from results", wafBlocked))
 	}
 	return reasons
 }
@@ -610,8 +654,11 @@ func nucleiExecution(scanResult runner.Result) map[string]interface{} {
 		"templates":                    scanOptions.templates,
 		"workflows":                    scanOptions.workflows,
 		"include_default_ignored_tags": scanOptions.includeDefaultIgnoredTags,
+		"concurrency":                  scanOptions.concurrency,
+		"rate_limit":                   scanOptions.rateLimit,
 		"total_lines":                  scanResult.TotalLines,
 		"malformed_lines":              scanResult.MalformedLines,
+		"waf_blocked":                  scanResult.WAFBlocked,
 	}
 	if scanResult.Stderr != "" {
 		execution["stderr"] = scanResult.Stderr

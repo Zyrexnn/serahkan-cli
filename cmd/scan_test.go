@@ -181,28 +181,31 @@ func TestValidateFocus(t *testing.T) {
 	}
 }
 
+func makeCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "scan"}
+	cmd.Flags().String("severity", "", "")
+	cmd.Flags().String("focus", "", "")
+	cmd.Flags().Int("timeout", 0, "")
+	cmd.Flags().Int("scan-timeout", 0, "")
+	cmd.Flags().Int("retries", 0, "")
+	cmd.Flags().Int("concurrency", 0, "")
+	cmd.Flags().Int("rate-limit", 0, "")
+	cmd.Flags().Bool("no-interactsh", false, "")
+	cmd.Flags().Bool("include-http", false, "")
+	cmd.Flags().Bool("include-low-info", false, "")
+	cmd.Flags().Bool("include-oob", false, "")
+	cmd.Flags().Bool("enable-headless", false, "")
+	cmd.Flags().Bool("enable-dast", false, "")
+	cmd.Flags().Bool("automatic-scan", false, "")
+	cmd.Flags().StringSlice("include-default-ignored-tags", nil, "")
+	cmd.Flags().StringSlice("type", nil, "")
+	cmd.Flags().Bool("skip-ai", false, "")
+	cmd.Flags().Int("ai-timeout", 0, "")
+	cmd.Flags().Int("limit", 0, "")
+	return cmd
+}
+
 func TestApplyScanProfile(t *testing.T) {
-	makeCommand := func() *cobra.Command {
-		cmd := &cobra.Command{Use: "scan"}
-		cmd.Flags().String("severity", "", "")
-		cmd.Flags().String("focus", "", "")
-		cmd.Flags().Int("timeout", 0, "")
-		cmd.Flags().Int("scan-timeout", 0, "")
-		cmd.Flags().Int("retries", 0, "")
-		cmd.Flags().Bool("no-interactsh", false, "")
-		cmd.Flags().Bool("include-http", false, "")
-		cmd.Flags().Bool("include-low-info", false, "")
-		cmd.Flags().Bool("include-oob", false, "")
-		cmd.Flags().Bool("enable-headless", false, "")
-		cmd.Flags().Bool("enable-dast", false, "")
-		cmd.Flags().Bool("automatic-scan", false, "")
-		cmd.Flags().StringSlice("include-default-ignored-tags", nil, "")
-		cmd.Flags().StringSlice("type", nil, "")
-		cmd.Flags().Bool("skip-ai", false, "")
-		cmd.Flags().Int("ai-timeout", 0, "")
-		cmd.Flags().Int("limit", 0, "")
-		return cmd
-	}
 
 	t.Run("fast profile applies quicker defaults", func(t *testing.T) {
 		scanOptions = zeroScanOptions()
@@ -350,6 +353,8 @@ func zeroScanOptions() struct {
 	timeout                   int
 	scanTimeout               int
 	retries                   int
+	concurrency               int
+	rateLimit                 int
 	verbose                   bool
 	noInteractsh              bool
 	includeHTTP               bool
@@ -388,6 +393,8 @@ func zeroScanOptions() struct {
 		timeout                   int
 		scanTimeout               int
 		retries                   int
+		concurrency               int
+		rateLimit                 int
 		verbose                   bool
 		noInteractsh              bool
 		includeHTTP               bool
@@ -659,4 +666,98 @@ func TestValidateAndFallbackAIOutput(t *testing.T) {
 			t.Error("expected playbook section in fallback report")
 		}
 	})
+}
+
+func TestSanitizeTarget(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{name: "clean url unchanged", input: "http://example.com", expected: "http://example.com"},
+		{name: "cf_chl_f_tk stripped", input: "http://example.com/?__cf_chl_f_tk=abc123", expected: "http://example.com/"},
+		{name: "multiple tracking params stripped", input: "http://example.com/?__cf_chl_f_tk=abc&fbclid=xyz&page=1", expected: "http://example.com/?page=1"},
+		{name: "gclid stripped", input: "http://example.com/?gclid=CjwKCA", expected: "http://example.com/"},
+		{name: "empty string", input: "", expected: ""},
+		{name: "whitespace trimmed", input: "  http://example.com  ", expected: "http://example.com"},
+		{name: "valid params preserved", input: "http://example.com/?id=42&name=test", expected: "http://example.com/?id=42&name=test"},
+		{name: "challenge token stripped", input: "https://target.com/path?challenge=xyz", expected: "https://target.com/path"},
+		{name: "msclkid stripped", input: "http://example.com/?msclkid=abc123", expected: "http://example.com/"},
+		{name: "hsenc stripped", input: "http://example.com/?_hsenc=abc", expected: "http://example.com/"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeTarget(tt.input)
+			if got != tt.expected {
+				t.Errorf("sanitizeTarget(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestConcurrencyRateLimitOverride(t *testing.T) {
+	t.Run("explicit concurrency overrides brutal-aggressive default", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.profile = "brutal-aggressive"
+		scanOptions.concurrency = 100
+
+		cmd := makeCommand()
+		if err := cmd.Flags().Set("concurrency", "100"); err != nil {
+			t.Fatalf("failed to set concurrency flag: %v", err)
+		}
+		applyScanProfile(cmd)
+
+		if scanOptions.concurrency != 100 {
+			t.Fatalf("expected explicit concurrency=100 to be preserved, got %d", scanOptions.concurrency)
+		}
+	})
+
+	t.Run("explicit rate-limit overrides brutal-aggressive default", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.profile = "brutal-aggressive"
+		scanOptions.rateLimit = 200
+
+		cmd := makeCommand()
+		if err := cmd.Flags().Set("rate-limit", "200"); err != nil {
+			t.Fatalf("failed to set rate-limit flag: %v", err)
+		}
+		applyScanProfile(cmd)
+
+		if scanOptions.rateLimit != 200 {
+			t.Fatalf("expected explicit rate-limit=200 to be preserved, got %d", scanOptions.rateLimit)
+		}
+	})
+
+	t.Run("unset concurrency gets zero default", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.profile = "balanced"
+
+		cmd := makeCommand()
+		applyScanProfile(cmd)
+
+		if scanOptions.concurrency != 0 {
+			t.Fatalf("expected unset concurrency to remain 0, got %d", scanOptions.concurrency)
+		}
+	})
+}
+
+func TestWAFBlockedDiagnostics(t *testing.T) {
+	diagnostics := buildScanDiagnostics([]string{"high", "critical"}, 3)
+	found := false
+	for _, reason := range diagnostics {
+		if strings.Contains(reason, "3 finding(s) blocked by WAF") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected WAF blocked diagnostic message, got: %v", diagnostics)
+	}
+
+	diagnostics = buildScanDiagnostics([]string{"high", "critical"}, 0)
+	for _, reason := range diagnostics {
+		if strings.Contains(reason, "blocked by WAF") {
+			t.Fatalf("expected no WAF diagnostic when wafBlocked=0, got: %v", diagnostics)
+		}
+	}
 }

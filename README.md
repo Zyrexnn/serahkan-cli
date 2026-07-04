@@ -6,6 +6,9 @@ A high-efficiency Go-based wrapper orchestration engine for [Nuclei](https://git
 
 - Profile-driven scan orchestration with six tuned presets covering fast triage through maximum-coverage auditing.
 - Real-time JSONL parsing with per-severity filtering, malformed-line resilience, and structured result aggregation.
+- WAF interception detection that automatically identifies and excludes findings blocked by security filters (Cloudflare, rate limiting, access denial).
+- URL sanitization that strips tracking and challenge tokens from target URLs before execution.
+- Dynamic concurrency and rate-limit control via global CLI flags that override any profile default.
 - Optional local LLM integration for automated defensive analysis of filtered findings.
 - Structured JSON output with full execution metadata, auth mode detection, and Nuclei stderr capture.
 - Transparent command construction via `--show-nuclei-command` with dynamic `-silent` suppression for full engine visibility.
@@ -180,6 +183,57 @@ go run . scan --target http://example.com --parity-mode --show-nuclei-command
 go run . scan --target http://example.com --parity-mode --output json
 ```
 
+### `--concurrency` and `--rate-limit`
+
+Global CLI flags that override profile-hardcoded concurrency and rate-limit values. When explicitly passed via the terminal, these values take precedence over any defaults set by the active profile (e.g., brutal-aggressive's 300/800). When not set, the profile defaults apply normally.
+
+```powershell
+go run . scan --target http://example.com --profile brutal-aggressive --concurrency 100 --rate-limit 200
+go run . scan --target http://example.com --concurrency 50 --rate-limit 100
+```
+
+This allows fine-tuning throughput without modifying profiles, useful for targets with strict rate-limiting or resource-constrained environments.
+
+## URL Sanitization
+
+The target URL is automatically pre-processed before being passed to Nuclei. Tracking and challenge tokens commonly injected by CDNs, analytics platforms, and security challenges are stripped to prevent template mismatches and ensure clean execution strings.
+
+Detected and removed tokens include:
+
+- Cloudflare challenge tokens (`__cf_chl_f_tk`, `__cf_chl_rt`, `challenge`)
+- Social media tracking (`fbclid`, `gclid`, `msclkid`)
+- Marketing automation (`_hsenc`, `_hsm`, `oly_enc_id`, `ss_compile`, `vero_id`)
+- Generic tracking parameters (`trk`)
+
+```powershell
+# Tracking tokens are stripped automatically
+go run . scan --target "http://example.com/?__cf_chl_f_tk=abc123&page=1"
+# Effective target: http://example.com/?page=1
+
+# Clean URLs pass through unchanged
+go run . scan --target http://example.com
+```
+
+## WAF Interception Detection
+
+The output parser inspects the raw response body of every finding for known WAF and security-block patterns. Findings that match these patterns are excluded from the result set and counted separately, preventing false positives from security infrastructure responses.
+
+Detected patterns include:
+
+- `Error 1015` (Cloudflare rate limiting)
+- `You are being rate limited`
+- `Access denied | freemodel.dev used Cloudflare to restrict access`
+- `Attention Required! | Cloudflare`
+- `403 Forbidden`, `Request blocked`, `Security block`
+- `Verify you are human`, `Checking your browser`
+
+The JSON output reports WAF-blocked findings via the `waf_blocked` field and includes a diagnostic message in `skipped_reasons` when any findings are intercepted.
+
+```powershell
+go run . scan --target http://example.com --profile benchmark-web --output json
+# waf_blocked will show count of intercepted findings
+```
+
 ## Output Schemas
 
 ### Text Mode
@@ -198,14 +252,15 @@ Machine-readable output. Returns a single JSON object with the following structu
 |---|---|---|
 | `target` | string | The scanned target URL. |
 | `severities` | string[] | Active severity filter. |
-| `finding_count` | int | Number of findings after severity filtering. |
+| `finding_count` | int | Number of findings after severity and WAF filtering. |
 | `raw_findings` | int | Total lines parsed from Nuclei stdout. |
 | `filtered_findings` | int | Lines discarded by severity filter. |
+| `waf_blocked` | int | Findings excluded due to WAF/security-block pattern detection. |
 | `skipped_reasons` | string[] | Diagnostic messages explaining reduced coverage. |
 | `profile` | string | Active scan profile name. |
 | `focus` | string | Active focus preset, if any. |
 | `auth_mode` | string | Detected authentication mode: `none`, `header`, `cookie`, `cookie_file`, or `mixed`. |
-| `nuclei_execution` | object | Execution metadata including parity mode, automatic scan, headless, DAST, OOB, types, tags, exclude tags, templates, workflows, include-default-ignored-tags, total lines, malformed lines, and stderr. |
+| `nuclei_execution` | object | Execution metadata including parity mode, automatic scan, headless, DAST, OOB, types, tags, exclude tags, templates, workflows, include-default-ignored-tags, concurrency, rate-limit, total lines, malformed lines, waf blocked, and stderr. |
 | `nuclei_command` | string[] | The full Nuclei argument array (only present when `--show-nuclei-command` is active). |
 | `ai_used` | bool | Whether AI analysis was invoked. |
 | `ai_status` | string | AI result: `ok`, `unavailable`, `fallback`, or `not_used`. |
@@ -234,6 +289,8 @@ go run . scan --target http://example.com --profile benchmark-web --output json 
 | `--timeout` | `10` | Nuclei per-request timeout in seconds. |
 | `--scan-timeout` | `120` | Maximum Nuclei phase duration in seconds. `0` disables the limit. |
 | `--retries` | `0` | Nuclei connection retries. |
+| `--concurrency` | `0` | Nuclei connection concurrency. Overrides profile defaults when explicitly set. `0` uses profile value. |
+| `--rate-limit` | `0` | Nuclei requests per second rate limit. Overrides profile defaults when explicitly set. `0` uses profile value. |
 | `--no-interactsh` | `true` | Disable out-of-band interaction templates. |
 | `--include-oob` | `false` | Enable out-of-band templates by clearing `--no-interactsh`. |
 | `--include-http` | `false` | Include raw HTTP request/response data (`-irr`). |
@@ -289,6 +346,9 @@ go run . scan --target http://testphp.vulnweb.com/ --profile benchmark-web
 
 # Maximum coverage for authorized internal targets
 go run . scan --target http://internal-app.local --profile brutal-aggressive --skip-ai
+
+# Override concurrency and rate-limit for constrained targets
+go run . scan --target http://example.com --profile brutal-aggressive --concurrency 100 --rate-limit 200
 
 # Authenticated scan with session cookie
 go run . scan --target http://example.com --profile web-full --cookie "session=abc123"

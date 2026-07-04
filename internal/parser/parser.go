@@ -35,12 +35,28 @@ type Options struct {
 	LogWriter io.Writer
 }
 
+var wafBlockPatterns = []string{
+	"Error 1015",
+	"You are being rate limited",
+	"Access denied | freemodel.dev used Cloudflare to restrict access",
+	"Access denied",
+	"Request blocked",
+	"Security block",
+	"WAF Notification",
+	"403 Forbidden",
+	"Attention Required! | Cloudflare",
+	"Please enable cookies",
+	"Checking your browser",
+	"Verify you are human",
+}
+
 type ParseResult struct {
 	Findings           []NucleiFinding
 	TotalLines         int
 	MalformedLines     int
 	RawFindings        int
 	FilteredBySeverity int
+	WAFBlocked         int
 }
 
 func ParseAndFilter(rawOutput string, allowedSeverities []string) ([]NucleiFinding, error) {
@@ -121,6 +137,14 @@ func ParseAndFilterDetailed(input io.Reader, allowedSeverities []string, options
 			fmt.Fprintf(options.LogWriter, "[DEBUG] Matched finding: %q (severity=%q, matched-at=%q)\n", finding.Name, finding.Severity, finding.MatchedAt)
 		}
 
+		if isWAFBlocked(finding) {
+			result.WAFBlocked++
+			if options.Verbose {
+				fmt.Fprintf(options.LogWriter, "[WARN] Skipping WAF-blocked finding %q (response contains security block pattern)\n", finding.Name)
+			}
+			continue
+		}
+
 		result.Findings = append(result.Findings, finding)
 	}
 
@@ -129,4 +153,17 @@ func ParseAndFilterDetailed(input io.Reader, allowedSeverities []string, options
 	}
 
 	return result, nil
+}
+
+func isWAFBlocked(finding NucleiFinding) bool {
+	body := strings.ToLower(finding.Response)
+	if body == "" {
+		return false
+	}
+	for _, pattern := range wafBlockPatterns {
+		if strings.Contains(body, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
 }

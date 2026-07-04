@@ -48,6 +48,7 @@ type Result struct {
 	FilteredBySeverity int
 	TotalLines         int
 	MalformedLines     int
+	WAFBlocked         int
 	Command            []string
 	Stderr             string
 }
@@ -117,6 +118,7 @@ func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []s
 		FilteredBySeverity: parseResult.FilteredBySeverity,
 		TotalLines:         parseResult.TotalLines,
 		MalformedLines:     parseResult.MalformedLines,
+		WAFBlocked:         parseResult.WAFBlocked,
 		Command:            command,
 		Stderr:             strings.TrimSpace(stderr.String()),
 	}
