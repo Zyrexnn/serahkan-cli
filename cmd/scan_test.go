@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/Zyrexnn/serahkan-cli/internal/parser"
+	"github.com/Zyrexnn/serahkan-cli/internal/runner"
+	"github.com/spf13/cobra"
 )
 
 func TestValidateTarget(t *testing.T) {
@@ -135,10 +137,195 @@ func TestValidateOutputMode(t *testing.T) {
 	}
 }
 
+func TestValidateScanProfile(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{input: "fast", wantErr: false},
+		{input: "balanced", wantErr: false},
+		{input: "deep", wantErr: false},
+		{input: "web-full", wantErr: false},
+		{input: "turbo", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		err := validateScanProfile(tt.input)
+		if (err != nil) != tt.wantErr {
+			t.Fatalf("validateScanProfile(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
+		}
+	}
+}
+
+func TestApplyScanProfile(t *testing.T) {
+	makeCommand := func() *cobra.Command {
+		cmd := &cobra.Command{Use: "scan"}
+		cmd.Flags().String("severity", "", "")
+		cmd.Flags().Int("timeout", 0, "")
+		cmd.Flags().Int("scan-timeout", 0, "")
+		cmd.Flags().Int("retries", 0, "")
+		cmd.Flags().Bool("no-interactsh", false, "")
+		cmd.Flags().Bool("include-http", false, "")
+		cmd.Flags().Bool("include-low-info", false, "")
+		cmd.Flags().Bool("include-oob", false, "")
+		cmd.Flags().Bool("enable-headless", false, "")
+		cmd.Flags().Bool("enable-dast", false, "")
+		cmd.Flags().Bool("automatic-scan", false, "")
+		cmd.Flags().StringSlice("include-default-ignored-tags", nil, "")
+		cmd.Flags().StringSlice("type", nil, "")
+		cmd.Flags().Bool("skip-ai", false, "")
+		cmd.Flags().Int("ai-timeout", 0, "")
+		cmd.Flags().Int("limit", 0, "")
+		return cmd
+	}
+
+	t.Run("fast profile applies quicker defaults", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.profile = "fast"
+		scanOptions.severity = "medium,high,critical"
+
+		cmd := makeCommand()
+		applyScanProfile(cmd)
+
+		if scanOptions.timeout != 8 || scanOptions.scanTimeout != 60 || scanOptions.limit != 3 {
+			t.Fatalf("unexpected fast profile values: timeout=%d scan-timeout=%d limit=%d", scanOptions.timeout, scanOptions.scanTimeout, scanOptions.limit)
+		}
+		if !scanOptions.noInteractsh || !scanOptions.skipAI {
+			t.Fatalf("expected fast profile to enable no-interactsh and skip-ai")
+		}
+		if scanOptions.severity != "high,critical" {
+			t.Fatalf("expected fast profile severity override, got %q", scanOptions.severity)
+		}
+	})
+
+	t.Run("explicit flags override profile defaults", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.profile = "deep"
+		scanOptions.timeout = 12
+		scanOptions.noInteractsh = true
+
+		cmd := makeCommand()
+		if err := cmd.Flags().Set("timeout", "12"); err != nil {
+			t.Fatalf("failed to set timeout flag: %v", err)
+		}
+		if err := cmd.Flags().Set("no-interactsh", "true"); err != nil {
+			t.Fatalf("failed to set no-interactsh flag: %v", err)
+		}
+
+		applyScanProfile(cmd)
+
+		if scanOptions.timeout != 12 {
+			t.Fatalf("expected explicit timeout to be preserved, got %d", scanOptions.timeout)
+		}
+		if !scanOptions.noInteractsh {
+			t.Fatalf("expected explicit no-interactsh to be preserved")
+		}
+		if scanOptions.scanTimeout != 300 || scanOptions.limit != 10 {
+			t.Fatalf("expected deep profile defaults on unset fields, got scan-timeout=%d limit=%d", scanOptions.scanTimeout, scanOptions.limit)
+		}
+	})
+
+	t.Run("web-full profile enables coverage options", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.profile = "web-full"
+
+		cmd := makeCommand()
+		applyScanProfile(cmd)
+
+		if scanOptions.severity != "info,low,medium,high,critical" {
+			t.Fatalf("expected web-full severity coverage, got %q", scanOptions.severity)
+		}
+		if scanOptions.noInteractsh || !scanOptions.includeHTTP || !scanOptions.enableHeadless || !scanOptions.enableDAST {
+			t.Fatalf("expected web-full to enable OOB, HTTP details, headless, and DAST")
+		}
+		if scanOptions.automaticScan {
+			t.Fatalf("expected web-full to leave automatic scan opt-in because Nuclei can fail when no tech tag matches")
+		}
+		if !containsString(scanOptions.includeDefaultIgnoredTags, "fuzz") {
+			t.Fatalf("expected web-full to include fuzz ignored tag")
+		}
+	})
+}
+
+func zeroScanOptions() struct {
+	target                    string
+	severity                  string
+	profile                   string
+	timeout                   int
+	scanTimeout               int
+	retries                   int
+	verbose                   bool
+	noInteractsh              bool
+	includeHTTP               bool
+	includeLowInfo            bool
+	includeOOB                bool
+	enableHeadless            bool
+	enableDAST                bool
+	automaticScan             bool
+	includeDefaultIgnoredTags []string
+	legacyCompatible          bool
+	showNucleiCommand         bool
+	headers                   []string
+	cookie                    string
+	cookieFile                string
+	tags                      []string
+	excludeTags               []string
+	templates                 []string
+	workflows                 []string
+	types                     []string
+	skipAI                    bool
+	aiEndpoint                string
+	aiModel                   string
+	aiApiKey                  string
+	aiTimeout                 int
+	limit                     int
+	output                    string
+} {
+	return struct {
+		target                    string
+		severity                  string
+		profile                   string
+		timeout                   int
+		scanTimeout               int
+		retries                   int
+		verbose                   bool
+		noInteractsh              bool
+		includeHTTP               bool
+		includeLowInfo            bool
+		includeOOB                bool
+		enableHeadless            bool
+		enableDAST                bool
+		automaticScan             bool
+		includeDefaultIgnoredTags []string
+		legacyCompatible          bool
+		showNucleiCommand         bool
+		headers                   []string
+		cookie                    string
+		cookieFile                string
+		tags                      []string
+		excludeTags               []string
+		templates                 []string
+		workflows                 []string
+		types                     []string
+		skipAI                    bool
+		aiEndpoint                string
+		aiModel                   string
+		aiApiKey                  string
+		aiTimeout                 int
+		limit                     int
+		output                    string
+	}{}
+}
+
 func TestEmitNoFindingsJSON(t *testing.T) {
 	var buf bytes.Buffer
 
-	err := emitNoFindings(&buf, "http://example.com", []string{"high", "critical"}, "json", 3*time.Second)
+	scanOptions = zeroScanOptions()
+	scanOptions.profile = "balanced"
+	err := emitNoFindings(&buf, "http://example.com", []string{"high", "critical"}, "json", 3*time.Second, runner.Result{
+		RawFindings:        2,
+		FilteredBySeverity: 2,
+	}, []string{"low/info severity findings may be hidden"})
 	if err != nil {
 		t.Fatalf("emitNoFindings() error = %v", err)
 	}
@@ -163,6 +350,12 @@ func TestEmitNoFindingsJSON(t *testing.T) {
 	if report.DurationSeconds != 3 {
 		t.Fatalf("expected duration_seconds=3, got %d", report.DurationSeconds)
 	}
+	if report.RawFindings != 2 || report.FilteredFindings != 2 {
+		t.Fatalf("expected raw/filter counts in report, got raw=%d filtered=%d", report.RawFindings, report.FilteredFindings)
+	}
+	if len(report.SkippedReasons) != 1 {
+		t.Fatalf("expected skipped reason in report")
+	}
 }
 
 func TestFormatDuration(t *testing.T) {
@@ -182,6 +375,15 @@ func TestFormatDuration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTrimForAI(t *testing.T) {
