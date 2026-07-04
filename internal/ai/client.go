@@ -21,9 +21,9 @@ const defaultLocalAIEndpoint = "http://127.0.0.1:1234/v1/chat/completions"
 
 const defaultLocalAIModel = "qwen2.5-coder-1.5b-instruct"
 
-const defaultTimeout = 120 * time.Second
+const defaultTimeout = 25 * time.Second
 
-const defaultRetryCount = 2
+const defaultRetryCount = 0
 
 const defaultRetryDelay = 2 * time.Second
 
