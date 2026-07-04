@@ -13,6 +13,7 @@ import (
 	"github.com/Zyrexnn/serahkan-cli/internal/ai"
 	"github.com/Zyrexnn/serahkan-cli/internal/parser"
 	"github.com/Zyrexnn/serahkan-cli/internal/runner"
+	"github.com/Zyrexnn/serahkan-cli/internal/style"
 	"github.com/spf13/cobra"
 )
 
@@ -127,7 +128,7 @@ var scanCmd = &cobra.Command{
 		}
 		diagnostics := buildScanDiagnostics(allowedSeverities, 0)
 
-		fmt.Fprintf(logOut, "[SCAN] target=%s severities=%s\n", scanOptions.target, strings.Join(allowedSeverities, ","))
+		fmt.Fprintf(logOut, "%s target=%s severities=%s\n", style.TagScan, style.Target(scanOptions.target), style.Metric(strings.Join(allowedSeverities, ",")))
 		stopTicker := startScanTicker(logOut, scanOptions.target)
 
 		runOptions := runner.Options{
@@ -182,7 +183,7 @@ var scanCmd = &cobra.Command{
 			diagnostics = buildScanDiagnostics(allowedSeverities, scanResult.WAFBlocked)
 		}
 
-		fmt.Fprintf(logOut, "[FILTER] nuclei output parsed raw=%d filtered=%d severity_skipped=%d waf_blocked=%d malformed=%d\n", scanResult.RawFindings, len(findings), scanResult.FilteredBySeverity, scanResult.WAFBlocked, scanResult.MalformedLines)
+		fmt.Fprintf(logOut, "%s raw=%s filtered=%s severity_skipped=%s waf_blocked=%s malformed=%s\n", style.TagFilter, style.Metric(fmt.Sprintf("%d", scanResult.RawFindings)), style.Metric(fmt.Sprintf("%d", len(findings))), style.Metric(fmt.Sprintf("%d", scanResult.FilteredBySeverity)), style.Metric(fmt.Sprintf("%d", scanResult.WAFBlocked)), style.Metric(fmt.Sprintf("%d", scanResult.MalformedLines)))
 
 		if len(findings) == 0 {
 			return emitNoFindings(out, scanOptions.target, allowedSeverities, scanOptions.output, time.Since(startedAt), scanResult, diagnostics)
@@ -203,9 +204,9 @@ var scanCmd = &cobra.Command{
 		aiError := ""
 
 		if scanOptions.skipAI {
-			fmt.Fprintln(logOut, "[AI] skipped by configuration")
+			fmt.Fprintf(logOut, "%s skipped by configuration\n", style.TagAI)
 		} else {
-			fmt.Fprintf(logOut, "[AI] analyzing %d finding(s)\n", len(findings))
+			fmt.Fprintf(logOut, "%s analyzing %s finding(s)\n", style.TagAI, style.Bold(fmt.Sprintf("%d", len(findings))))
 
 			aiConfig := ai.DefaultConfig()
 			if scanOptions.aiEndpoint != "" {
@@ -226,7 +227,7 @@ var scanCmd = &cobra.Command{
 			aiUsed = true
 			aiStatus = "ok"
 			if aiErr != nil {
-				fmt.Fprintf(logOut, "[WARN] AI unavailable: %v\n", aiErr)
+				fmt.Fprintf(logOut, "%s AI unavailable: %v\n", style.TagWarn, aiErr)
 				analysis = ""
 				aiUsed = false
 				aiStatus = "unavailable"
@@ -243,21 +244,11 @@ var scanCmd = &cobra.Command{
 			return emitJSONReport(out, scanOptions.target, allowedSeverities, findings, strings.TrimSpace(validatedReport), aiUsed, aiStatus, aiError, time.Since(startedAt), scanResult, diagnostics)
 		}
 
-		fmt.Fprintln(out)
-		fmt.Fprintf(out, "Target   : %s\n", scanOptions.target)
-		fmt.Fprintf(out, "Findings : %d\n", len(findings))
-		fmt.Fprintf(out, "AI Used  : %t\n", aiUsed)
-		fmt.Fprintf(out, "AI Status: %s\n", aiStatus)
-		fmt.Fprintf(out, "Duration : %s\n", formatDuration(time.Since(startedAt)))
+		style.PrintScanSummary(out, scanOptions.target, len(findings), aiUsed, aiStatus, formatDuration(time.Since(startedAt)))
 		if aiError != "" {
-			fmt.Fprintf(out, "AI Error : %s\n", aiError)
+			fmt.Fprintf(out, "  %s  %s\n", style.Yellow.Sprint("AI Error:"), style.Warn(aiError))
 		}
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, "================================================================================")
-		fmt.Fprintln(out, "                       AI DEFENSIVE ANALYSIS REPORT                             ")
-		fmt.Fprintln(out, "================================================================================")
-		fmt.Fprintln(out, strings.TrimSpace(validatedReport))
-		fmt.Fprintln(out, "================================================================================")
+		style.PrintAIReport(out, strings.TrimSpace(validatedReport))
 
 		return nil
 	},
@@ -535,18 +526,10 @@ func emitNoFindings(out io.Writer, target string, severities []string, mode stri
 		return emitJSONReport(out, target, severities, []parser.NucleiFinding{}, "", false, "not_used", "", duration, scanResult, diagnostics)
 	}
 
-	fmt.Fprintln(out)
-	fmt.Fprintf(out, "Target   : %s\n", target)
-	fmt.Fprintf(out, "Findings : 0\n")
-	fmt.Fprintf(out, "Raw      : %d\n", scanResult.RawFindings)
-	fmt.Fprintf(out, "Filtered : %d\n", scanResult.FilteredBySeverity)
-	fmt.Fprintf(out, "AI Used  : false\n")
-	fmt.Fprintf(out, "AI Status: not_used\n")
-	fmt.Fprintf(out, "Duration : %s\n", formatDuration(duration))
-	fmt.Fprintln(out)
-	fmt.Fprintf(out, "[INFO] No findings matched the current scan configuration [%s].\n", strings.Join(severities, ", "))
+	style.PrintNoFindingsSummary(out, target, scanResult.RawFindings, scanResult.FilteredBySeverity, formatDuration(duration))
+	fmt.Fprintf(out, "  %s %s [%s]\n", style.TagInfo, style.Dim("No findings matched the current scan configuration"), style.Dim(strings.Join(severities, ", ")))
 	for _, reason := range diagnostics {
-		fmt.Fprintf(out, "- %s\n", reason)
+		fmt.Fprintf(out, "  %s %s\n", style.DimWhite.Sprint("-"), style.Dim(reason))
 	}
 	fmt.Fprintln(out)
 	return nil
@@ -704,7 +687,7 @@ func startScanTicker(out io.Writer, target string) func() {
 			select {
 			case <-ticker.C:
 				elapsed += 10
-				fmt.Fprintf(out, "[SCAN] active=%ds target=%s\n", elapsed, target)
+				fmt.Fprintf(out, "%s active=%s target=%s\n", style.TagScan, style.Metric(fmt.Sprintf("%ds", elapsed)), style.Target(target))
 			case <-done:
 				return
 			}

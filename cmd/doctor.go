@@ -6,6 +6,7 @@ import (
 
 	"github.com/Zyrexnn/serahkan-cli/internal/ai"
 	"github.com/Zyrexnn/serahkan-cli/internal/doctor"
+	"github.com/Zyrexnn/serahkan-cli/internal/style"
 	"github.com/spf13/cobra"
 )
 
@@ -25,24 +26,17 @@ var doctorCmd = &cobra.Command{
 			doctor.CheckAI(cmd.Context(), aiConfig),
 		}
 
-		fmt.Fprintln(out, "serahkan doctor")
-		fmt.Fprintln(out, "----------------")
+		style.PrintDoctorHeader(out)
 
 		hasFailure := false
 		for _, result := range results {
-			fmt.Fprintf(out, "%-6s %-8s %s\n", "["+result.Status+"]", result.Name, result.Details)
-			if doctorVerbose {
-				for _, line := range result.DebugLines {
-					fmt.Fprintf(out, "       %-8s %s\n", "", line)
-				}
-			}
+			style.PrintDoctorResult(out, result.Status, result.Name, result.Details, result.DebugLines, doctorVerbose)
 			if result.Status != "OK" {
 				hasFailure = true
 			}
 		}
 
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, "config precedence: flag > env > config file > default")
+		style.PrintDoctorFooter(out, hasFailure)
 
 		if hasFailure {
 			return fmt.Errorf("doctor checks failed")

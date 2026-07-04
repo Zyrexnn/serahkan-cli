@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"fmt"
 	"runtime"
 
+	"github.com/Zyrexnn/serahkan-cli/internal/style"
 	"github.com/spf13/cobra"
 )
 
@@ -17,12 +17,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print build and runtime version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "serahkan %s\n", Version)
-		fmt.Fprintf(out, "commit: %s\n", Commit)
-		fmt.Fprintf(out, "built: %s\n", Date)
-		fmt.Fprintf(out, "go: %s\n", runtime.Version())
-		fmt.Fprintf(out, "os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+		style.PrintVersionInfo(cmd.OutOrStdout(), Version, Commit, Date, runtime.Version(), runtime.GOOS+"/"+runtime.GOARCH)
 	},
 }
 
