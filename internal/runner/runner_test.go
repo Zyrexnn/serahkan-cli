@@ -132,6 +132,26 @@ func TestBuildNucleiArgs(t *testing.T) {
 	if !strings.Contains(parityJoined, "-ni") {
 		t.Fatalf("expected parity args to preserve requested -ni, got %q", parityJoined)
 	}
+
+	showCmdArgs := buildNucleiArgs("/tmp/nuclei", "https://example.com", []string{"high"}, Options{
+		TimeoutSeconds: 10,
+		Retries:        0,
+		ShowCommand:    true,
+	})
+	showCmdJoined := strings.Join(showCmdArgs, " ")
+	if strings.Contains(showCmdJoined, "-silent") {
+		t.Fatalf("expected -silent to be omitted when ShowCommand is true, got %q", showCmdJoined)
+	}
+
+	normalArgs := buildNucleiArgs("/tmp/nuclei", "https://example.com", []string{"high"}, Options{
+		TimeoutSeconds: 10,
+		Retries:        0,
+		ShowCommand:    false,
+	})
+	normalJoined := strings.Join(normalArgs, " ")
+	if !strings.Contains(normalJoined, "-silent") {
+		t.Fatalf("expected -silent to be included when ShowCommand is false, got %q", normalJoined)
+	}
 }
 
 func TestIsAutomaticScanNoTemplateError(t *testing.T) {

@@ -281,14 +281,14 @@ func TestApplyScanProfile(t *testing.T) {
 		if scanOptions.severity != "info,low,medium,high,critical" {
 			t.Fatalf("expected brutal-aggressive severity coverage, got %q", scanOptions.severity)
 		}
-		if scanOptions.timeout != 45 || scanOptions.scanTimeout != 600 || scanOptions.retries != 2 {
+		if scanOptions.timeout != 45 || scanOptions.scanTimeout != 600 || scanOptions.retries != 3 {
 			t.Fatalf("unexpected brutal-aggressive timing values: timeout=%d scan-timeout=%d retries=%d", scanOptions.timeout, scanOptions.scanTimeout, scanOptions.retries)
 		}
 		if scanOptions.noInteractsh || !scanOptions.includeHTTP || !scanOptions.enableHeadless || !scanOptions.enableDAST || !scanOptions.skipAI {
 			t.Fatalf("expected brutal-aggressive to enable OOB, HTTP details, headless, DAST, and skip-ai")
 		}
-		if !containsString(scanOptions.includeDefaultIgnoredTags, "fuzz") || !containsString(scanOptions.includeDefaultIgnoredTags, "bruteforce") {
-			t.Fatalf("expected brutal-aggressive to include fuzz and bruteforce ignored tags")
+		if !containsString(scanOptions.includeDefaultIgnoredTags, "cve") || !containsString(scanOptions.includeDefaultIgnoredTags, "sqli") || !containsString(scanOptions.includeDefaultIgnoredTags, "xss") || !containsString(scanOptions.includeDefaultIgnoredTags, "lfi") || !containsString(scanOptions.includeDefaultIgnoredTags, "rce") || !containsString(scanOptions.includeDefaultIgnoredTags, "misconfig") || !containsString(scanOptions.includeDefaultIgnoredTags, "exposure") {
+			t.Fatalf("expected brutal-aggressive to include cve,sqli,xss,lfi,rce,misconfig,exposure tags")
 		}
 		if !containsString(scanOptions.types, "http") || !containsString(scanOptions.types, "dns") {
 			t.Fatalf("expected brutal-aggressive to load http/headless/javascript/dns types")
@@ -311,8 +311,11 @@ func TestApplyScanProfile(t *testing.T) {
 		if scanOptions.focus != "web-vulns" {
 			t.Fatalf("expected benchmark-web focus to default to web-vulns, got %q", scanOptions.focus)
 		}
-		if !scanOptions.noInteractsh || !scanOptions.includeHTTP || !scanOptions.enableDAST || !scanOptions.skipAI {
+		if !scanOptions.noInteractsh || !scanOptions.includeHTTP || !scanOptions.skipAI {
 			t.Fatalf("expected benchmark-web to enable benchmark web scan defaults")
+		}
+		if scanOptions.enableDAST {
+			t.Fatalf("expected benchmark-web to leave DAST disabled for standard HTTP template coverage")
 		}
 		if !containsString(scanOptions.tags, "xss") || !containsString(scanOptions.tags, "sqli") {
 			t.Fatalf("expected benchmark-web to apply web-vulns focus tags")

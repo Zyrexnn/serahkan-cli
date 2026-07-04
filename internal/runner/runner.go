@@ -175,11 +175,14 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 	args := []string{
 		"-target", target,
 		"-jsonl",
-		"-silent",
 		"-severity", strings.Join(allowedSeverities, ","),
 		"-timeout", fmt.Sprint(options.TimeoutSeconds),
 		"-retries", fmt.Sprint(options.Retries),
 		"-leave-default-ports",
+	}
+
+	if !options.ShowCommand {
+		args = append(args[:3], append([]string{"-silent"}, args[3:]...)...)
 	}
 
 	if !options.ParityMode {
