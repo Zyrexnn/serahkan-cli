@@ -21,6 +21,8 @@ type Options struct {
 	Retries                   int
 	Verbose                   bool
 	NoInteractsh              bool
+	Concurrency               int
+	RateLimit                 int
 	IncludeHTTP               bool
 	EnableHeadless            bool
 	EnableDAST                bool
@@ -176,8 +178,8 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		"-severity", strings.Join(allowedSeverities, ","),
 		"-timeout", fmt.Sprint(options.TimeoutSeconds),
 		"-retries", fmt.Sprint(options.Retries),
-		"-c", "150",
-		"-rl", "500",
+		"-c", fmt.Sprint(defaultInt(options.Concurrency, 150)),
+		"-rl", fmt.Sprint(defaultInt(options.RateLimit, 500)),
 		"-leave-default-ports",
 	}
 
@@ -244,6 +246,13 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 	}
 
 	return args
+}
+
+func defaultInt(value, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func normalizeList(values []string) []string {

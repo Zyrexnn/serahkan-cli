@@ -80,6 +80,8 @@ func TestBuildNucleiArgs(t *testing.T) {
 	webArgs := buildNucleiArgs("/tmp/nuclei", "https://example.com", []string{"info", "low", "medium", "high", "critical"}, Options{
 		TimeoutSeconds:            30,
 		Retries:                   1,
+		Concurrency:               300,
+		RateLimit:                 800,
 		EnableHeadless:            true,
 		EnableDAST:                true,
 		AutomaticScan:             true,
@@ -97,6 +99,8 @@ func TestBuildNucleiArgs(t *testing.T) {
 		"-headless",
 		"-dast",
 		"-as",
+		"-c 300",
+		"-rl 800",
 		"-itags fuzz",
 		"-H Authorization: Bearer token",
 		"-H Cookie: sid=abc",
