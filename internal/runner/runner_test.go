@@ -51,12 +51,16 @@ func TestBuildNucleiArgs(t *testing.T) {
 		TimeoutSeconds: 30,
 		Retries:        2,
 		NoInteractsh:   true,
+		IncludeHTTP:    true,
 	})
 	if !strings.Contains(strings.Join(withBannerFlag, " "), "-no-banner") {
 		t.Fatalf("expected -no-banner to be included when supported")
 	}
 	if !strings.Contains(strings.Join(withBannerFlag, " "), "-ni") {
 		t.Fatalf("expected -ni to be included when NoInteractsh is true")
+	}
+	if !strings.Contains(strings.Join(withBannerFlag, " "), "-irr") {
+		t.Fatalf("expected -irr to be included when IncludeHTTP is true")
 	}
 
 	withoutBannerFlag := buildNucleiArgs("/tmp/nuclei-no-bannerless", "https://example.com", []string{"high"}, Options{
@@ -65,5 +69,57 @@ func TestBuildNucleiArgs(t *testing.T) {
 	})
 	if strings.Contains(strings.Join(withoutBannerFlag, " "), "-no-banner") {
 		t.Fatalf("expected -no-banner to be omitted when unsupported")
+	}
+	if strings.Contains(strings.Join(withoutBannerFlag, " "), "-irr") {
+		t.Fatalf("expected -irr to be omitted by default")
+	}
+	if !strings.Contains(strings.Join(withoutBannerFlag, " "), "-omit-raw") {
+		t.Fatalf("expected -omit-raw to be included by default")
+	}
+
+	webArgs := buildNucleiArgs("/tmp/nuclei", "https://example.com", []string{"info", "low", "medium", "high", "critical"}, Options{
+		TimeoutSeconds:            30,
+		Retries:                   1,
+		EnableHeadless:            true,
+		EnableDAST:                true,
+		AutomaticScan:             true,
+		IncludeDefaultIgnoredTags: []string{"fuzz"},
+		Headers:                   []string{"Authorization: Bearer token"},
+		Cookie:                    "sid=abc",
+		Tags:                      []string{"xss,sqli"},
+		ExcludeTags:               []string{"dos"},
+		Templates:                 []string{"http/exposures"},
+		Workflows:                 []string{"workflows/test.yaml"},
+		Types:                     []string{"http,headless"},
+	})
+	webJoined := strings.Join(webArgs, " ")
+	expectedParts := []string{
+		"-headless",
+		"-dast",
+		"-as",
+		"-itags fuzz",
+		"-H Authorization: Bearer token",
+		"-H Cookie: sid=abc",
+		"-tags xss,sqli",
+		"-etags dos",
+		"-t http/exposures",
+		"-w workflows/test.yaml",
+		"-type http,headless",
+	}
+	for _, expected := range expectedParts {
+		if !strings.Contains(webJoined, expected) {
+			t.Fatalf("expected args to contain %q, got %q", expected, webJoined)
+		}
+	}
+}
+
+func TestIsAutomaticScanNoTemplateError(t *testing.T) {
+	stderr := "[FTL] Could not run nuclei: could not create automatic scan service: could not find any templates with tech tag"
+	if !isAutomaticScanNoTemplateError(stderr) {
+		t.Fatalf("expected automatic scan no-template error to be detected")
+	}
+
+	if isAutomaticScanNoTemplateError("[FTL] unrelated nuclei failure") {
+		t.Fatalf("expected unrelated error to be ignored")
 	}
 }

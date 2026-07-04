@@ -121,8 +121,31 @@ invalid-json-here`
 	if result.MalformedLines != 1 {
 		t.Fatalf("expected MalformedLines=1, got %d", result.MalformedLines)
 	}
+	if result.RawFindings != 1 {
+		t.Fatalf("expected RawFindings=1, got %d", result.RawFindings)
+	}
 	if len(result.Findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(result.Findings))
+	}
+}
+
+func TestParseAndFilterDetailedCountsSeverityFilteredFindings(t *testing.T) {
+	inputJSONL := `{"template-id":"info","name":"Info","severity":"info","info":{"name":"Info","severity":"info"}}
+{"template-id":"high","name":"High","severity":"high","info":{"name":"High","severity":"high"}}`
+
+	result, err := ParseAndFilterDetailed(bytes.NewBufferString(inputJSONL), []string{"high"}, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.RawFindings != 2 {
+		t.Fatalf("expected RawFindings=2, got %d", result.RawFindings)
+	}
+	if result.FilteredBySeverity != 1 {
+		t.Fatalf("expected FilteredBySeverity=1, got %d", result.FilteredBySeverity)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("expected 1 retained finding, got %d", len(result.Findings))
 	}
 }
 

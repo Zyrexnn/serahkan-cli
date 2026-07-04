@@ -36,9 +36,11 @@ type Options struct {
 }
 
 type ParseResult struct {
-	Findings       []NucleiFinding
-	TotalLines     int
-	MalformedLines int
+	Findings           []NucleiFinding
+	TotalLines         int
+	MalformedLines     int
+	RawFindings        int
+	FilteredBySeverity int
 }
 
 func ParseAndFilter(rawOutput string, allowedSeverities []string) ([]NucleiFinding, error) {
@@ -104,8 +106,11 @@ func ParseAndFilterDetailed(input io.Reader, allowedSeverities []string, options
 			finding.Severity = finding.Info.Severity
 		}
 
+		result.RawFindings++
+
 		severityKey := strings.ToLower(strings.TrimSpace(finding.Severity))
 		if _, ok := allowed[severityKey]; !ok {
+			result.FilteredBySeverity++
 			if options.Verbose {
 				fmt.Fprintf(options.LogWriter, "[DEBUG] Skipping finding %q (severity=%q, not in allowed list)\n", finding.Name, finding.Severity)
 			}
