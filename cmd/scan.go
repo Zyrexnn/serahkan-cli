@@ -213,6 +213,20 @@ var scanCmd = &cobra.Command{
 		aiStatus := "not_used"
 		aiError := ""
 
+		scanCfg := cfgstore.LoadScanConfig()
+		if scanCfg.AIEndpoint != "" && scanCfg.AIModel != "" && !cmd.Flags().Changed("skip-ai") {
+			scanOptions.skipAI = false
+			if !cmd.Flags().Changed("ai-endpoint") {
+				scanOptions.aiEndpoint = scanCfg.AIEndpoint
+			}
+			if !cmd.Flags().Changed("ai-model") {
+				scanOptions.aiModel = scanCfg.AIModel
+			}
+			if !cmd.Flags().Changed("ai-timeout") && scanCfg.TimeoutSeconds > 0 {
+				scanOptions.aiTimeout = scanCfg.TimeoutSeconds
+			}
+		}
+
 		if scanOptions.skipAI {
 			fmt.Fprintf(logOut, "%s skipped by configuration\n", style.TagAI)
 		} else {
