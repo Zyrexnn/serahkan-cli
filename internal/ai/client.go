@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -29,6 +30,8 @@ const defaultRetryDelay = 2 * time.Second
 
 const systemPrompt = `You are an elite automated DevSecOps AI agent and advanced source-code auditor built into the 'serahkan-cli' platform. Analyze raw vulnerability logs and output a highly technical, cyber-security-themed report.
 
+IMPORTANT: The input findings are deduplicated by vulnerability type. Each finding represents a unique vulnerability signature with multiple affected URLs listed. Analyze the root cause ONCE per vulnerability type and reference all affected URLs.
+
 STRICT OUTPUT RULE: Do not use markdown headers (#, ##). You MUST strictly replicate the ASCII format, dividers, and status brackets shown below:
 
 +-------------------------------------------------------------------------+
@@ -46,6 +49,9 @@ STRICT OUTPUT RULE: Do not use markdown headers (#, ##). You MUST strictly repli
 ===========================================================================
 [!] FINDING X: [Name]
     - Risk Level  : [Severity]
+    - Affected URLs:
+      - [URL 1]
+      - [URL 2]
     - Technical Overview: [Brief description]
     - Manual Proof-of-Concept Validation:
       * Execute Command:
@@ -78,6 +84,20 @@ type ChatCompletionResponse struct {
 
 type ChatCompletionChoice struct {
 	Message ChatMessage `json:"message"`
+}
+
+type ChatCompletionStreamResponse struct {
+	Choices []ChatCompletionStreamChoice `json:"choices"`
+}
+
+type ChatCompletionStreamChoice struct {
+	Delta        ChatCompletionStreamDelta `json:"delta"`
+	FinishReason *string                   `json:"finish_reason"`
+}
+
+type ChatCompletionStreamDelta struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type Config struct {
@@ -243,6 +263,135 @@ func sendSingleRequest(ctx context.Context, body []byte, config Config) (string,
 	}
 
 	return content, nil
+}
+
+func StreamToLocalAI(ctx context.Context, prompt string, config Config, onToken func(string)) (string, error) {
+	if strings.TrimSpace(config.Endpoint) == "" {
+		return "", fmt.Errorf("AI endpoint cannot be empty")
+	}
+	if strings.TrimSpace(config.Model) == "" {
+		return "", fmt.Errorf("AI model cannot be empty")
+	}
+	if config.Timeout <= 0 {
+		config.Timeout = defaultTimeout
+	}
+	if config.RetryCount < 0 {
+		config.RetryCount = 0
+	}
+	if config.RetryDelay <= 0 {
+		config.RetryDelay = defaultRetryDelay
+	}
+
+	payload := ChatCompletionRequest{
+		Model: strings.TrimSpace(config.Model),
+		Messages: []ChatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: strings.TrimSpace(prompt)},
+		},
+		Stream: true,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode AI request: %w", err)
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= config.RetryCount; attempt++ {
+		content, err := sendStreamingRequest(ctx, body, config, onToken)
+		if err == nil {
+			return content, nil
+		}
+
+		lastErr = err
+		if !isRetryableAIError(err) || attempt == config.RetryCount {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("AI request canceled: %w", ctx.Err())
+		case <-time.After(config.RetryDelay):
+		}
+	}
+
+	return "", lastErr
+}
+
+func sendStreamingRequest(ctx context.Context, body []byte, config Config, onToken func(string)) (string, error) {
+	transport := &http.Transport{
+		ResponseHeaderTimeout: config.Timeout,
+	}
+	client := &http.Client{
+		Transport: transport,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSpace(config.Endpoint), bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create AI request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if strings.TrimSpace(config.ApiKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(config.ApiKey))
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", classifyAIConnectionError(strings.TrimSpace(config.Endpoint), err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("local AI server returned %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+	}
+
+	var accumulated strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		line = strings.TrimSpace(line)
+
+		if line == "" {
+			continue
+		}
+		if line == "data: [DONE]" {
+			break
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+		var chunk ChatCompletionStreamResponse
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+
+		delta := chunk.Choices[0].Delta
+		if delta.Content == "" {
+			continue
+		}
+
+		accumulated.WriteString(delta.Content)
+		if onToken != nil {
+			onToken(delta.Content)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return accumulated.String(), fmt.Errorf("failed to read AI stream: %w", err)
+	}
+
+	return accumulated.String(), nil
 }
 
 func isRetryableAIError(err error) bool {

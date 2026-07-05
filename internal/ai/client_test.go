@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -273,6 +274,168 @@ func TestSendToLocalAIErrorHandling(t *testing.T) {
 		}
 		if reply != "Recovered response" {
 			t.Fatalf("expected recovered response, got %q", reply)
+		}
+		if attempts != 2 {
+			t.Fatalf("expected 2 attempts, got %d", attempts)
+		}
+	})
+}
+
+func TestStreamToLocalAIMockServer(t *testing.T) {
+	expectedContent := "Mock AI Analysis Report"
+	tokens := []string{"Mock ", "AI ", "Analysis ", "Report"}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", r.Method)
+		}
+		if r.Header.Get("Accept") != "text/event-stream" {
+			t.Errorf("expected text/event-stream header, got %s", r.Header.Get("Accept"))
+		}
+
+		var reqBody ChatCompletionRequest
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("failed to decode request body: %v", err)
+		}
+		if !reqBody.Stream {
+			t.Errorf("expected stream=true, got false")
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer does not support flushing")
+		}
+
+		for _, token := range tokens {
+			chunk := ChatCompletionStreamResponse{
+				Choices: []ChatCompletionStreamChoice{
+					{
+						Delta: ChatCompletionStreamDelta{
+							Role:    "assistant",
+							Content: token,
+						},
+						FinishReason: nil,
+					},
+				},
+			}
+			data, _ := json.Marshal(chunk)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer server.Close()
+
+	cfg := Config{
+		Endpoint: server.URL,
+		Model:    "test-model",
+		Timeout:  5 * time.Second,
+	}
+
+	var receivedTokens []string
+	content, err := StreamToLocalAI(context.Background(), "some input", cfg, func(token string) {
+		receivedTokens = append(receivedTokens, token)
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if content != expectedContent {
+		t.Errorf("expected content %q, got %q", expectedContent, content)
+	}
+
+	if len(receivedTokens) != len(tokens) {
+		t.Fatalf("expected %d tokens, got %d", len(tokens), len(receivedTokens))
+	}
+
+	for i, token := range tokens {
+		if receivedTokens[i] != token {
+			t.Errorf("token %d: expected %q, got %q", i, token, receivedTokens[i])
+		}
+	}
+}
+
+func TestStreamToLocalAIValidation(t *testing.T) {
+	cfg := Config{}
+
+	_, err := StreamToLocalAI(context.Background(), "hello", cfg, nil)
+	if err == nil || err.Error() != "AI endpoint cannot be empty" {
+		t.Errorf("expected empty endpoint error, got: %v", err)
+	}
+
+	cfg.Endpoint = "http://localhost"
+	_, err = StreamToLocalAI(context.Background(), "hello", cfg, nil)
+	if err == nil || err.Error() != "AI model cannot be empty" {
+		t.Errorf("expected empty model error, got: %v", err)
+	}
+}
+
+func TestStreamToLocalAIErrorHandling(t *testing.T) {
+	t.Run("server returns 500", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("internal server error"))
+		}))
+		defer server.Close()
+
+		cfg := Config{
+			Endpoint: server.URL,
+			Model:    "test-model",
+			Timeout:  5 * time.Second,
+		}
+
+		_, err := StreamToLocalAI(context.Background(), "input", cfg, nil)
+		if err == nil {
+			t.Error("expected error from 500 response, got nil")
+		}
+	})
+
+	t.Run("retries on transient error", func(t *testing.T) {
+		attempts := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts++
+			if attempts == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte("temporary failure"))
+				return
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			chunk := ChatCompletionStreamResponse{
+				Choices: []ChatCompletionStreamChoice{
+					{
+						Delta: ChatCompletionStreamDelta{
+							Role:    "assistant",
+							Content: "recovered",
+						},
+					},
+				},
+			}
+			data, _ := json.Marshal(chunk)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+		}))
+		defer server.Close()
+
+		cfg := Config{
+			Endpoint:   server.URL,
+			Model:      "test-model",
+			Timeout:    5 * time.Second,
+			RetryCount: 1,
+			RetryDelay: 10 * time.Millisecond,
+		}
+
+		content, err := StreamToLocalAI(context.Background(), "input", cfg, nil)
+		if err != nil {
+			t.Fatalf("expected retry to recover, got error: %v", err)
+		}
+		if content != "recovered" {
+			t.Fatalf("expected 'recovered', got %q", content)
 		}
 		if attempts != 2 {
 			t.Fatalf("expected 2 attempts, got %d", attempts)
