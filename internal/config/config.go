@@ -26,10 +26,11 @@ type AIConfig struct {
 }
 
 type ScanConfig struct {
-	RateLimit   int    `yaml:"rate-limit"`
-	Concurrency int    `yaml:"concurrency"`
-	AIEndpoint  string `yaml:"ai-endpoint"`
-	AIModel     string `yaml:"ai-model"`
+	RateLimit     int    `yaml:"rate-limit"`
+	Concurrency   int    `yaml:"concurrency"`
+	AIEndpoint    string `yaml:"ai-endpoint"`
+	AIModel       string `yaml:"ai-model"`
+	TimeoutSeconds int   `yaml:"timeout_seconds"`
 }
 
 func Load() (Config, string, error) {
@@ -119,6 +120,26 @@ func loadScanConfigWithDirs(wdFn func() (string, error), homeFn func() (string, 
 		data, readErr := os.ReadFile(path)
 		if readErr == nil {
 			_ = yaml.Unmarshal(data, &cfg)
+			if cfg.AIEndpoint == "" && cfg.AIModel == "" {
+				var fallback struct {
+					AI struct {
+						Endpoint      string `yaml:"endpoint"`
+						Model         string `yaml:"model"`
+						TimeoutSeconds int   `yaml:"timeout_seconds"`
+					} `yaml:"ai"`
+				}
+				if err := yaml.Unmarshal(data, &fallback); err == nil {
+					if fallback.AI.Endpoint != "" {
+						cfg.AIEndpoint = fallback.AI.Endpoint
+					}
+					if fallback.AI.Model != "" {
+						cfg.AIModel = fallback.AI.Model
+					}
+					if cfg.TimeoutSeconds == 0 && fallback.AI.TimeoutSeconds > 0 {
+						cfg.TimeoutSeconds = fallback.AI.TimeoutSeconds
+					}
+				}
+			}
 		}
 	}
 
