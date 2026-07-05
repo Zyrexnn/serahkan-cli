@@ -189,6 +189,83 @@ func PrintAIReport(w io.Writer, report string) {
 	fmt.Fprintln(w, sep)
 }
 
+func PrintAIReportHeader(w io.Writer) {
+	sep := DimWhite.Sprint("═══════════════════════════════════════════════════════════════════════════════")
+	title := Cyan.Sprint("                       AI DEFENSIVE ANALYSIS REPORT")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, sep)
+	fmt.Fprintf(w, "  %s\n", title)
+	fmt.Fprintln(w, sep)
+	fmt.Fprintln(w)
+}
+
+func PrintAIReportFooter(w io.Writer) {
+	sep := DimWhite.Sprint("═══════════════════════════════════════════════════════════════════════════════")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, sep)
+}
+
+func PrintAIReportLine(w io.Writer, line string) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		fmt.Fprintln(w)
+	} else if strings.HasPrefix(trimmed, "[=]") {
+		header := strings.TrimPrefix(trimmed, "[=]")
+		fmt.Fprintf(w, "  %s %s\n", Green.Sprint("[=]"), Green.Sprint(strings.TrimSpace(header)))
+	} else if strings.HasPrefix(trimmed, "[!]") {
+		inner := strings.TrimPrefix(trimmed, "[!]")
+		fmt.Fprintf(w, "  %s %s\n", Red.Sprint("[!]"), Red.Sprint(strings.TrimSpace(inner)))
+	} else if strings.HasPrefix(trimmed, "[*]") {
+		inner := strings.TrimPrefix(trimmed, "[*]")
+		fmt.Fprintf(w, "  %s %s\n", Cyan.Sprint("[*]"), Cyan.Sprint(strings.TrimSpace(inner)))
+	} else if strings.HasPrefix(trimmed, "---") || strings.HasPrefix(trimmed, "===") || strings.HasPrefix(trimmed, "+-") {
+		fmt.Fprintf(w, "  %s\n", DimWhite.Sprint(trimmed))
+	} else if strings.HasPrefix(trimmed, "$ ") {
+		cmd := strings.TrimPrefix(trimmed, "$ ")
+		fmt.Fprintf(w, "    $ %s\n", Yellow.Sprint(cmd))
+	} else if strings.HasPrefix(trimmed, "- Target Host") {
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) == 2 {
+			fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), Target(strings.TrimSpace(parts[1])))
+		} else {
+			fmt.Fprintf(w, "  %s\n", line)
+		}
+	} else if strings.HasPrefix(trimmed, "- Risk Status") {
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) == 2 {
+			fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), Red.Sprint(strings.TrimSpace(parts[1])))
+		} else {
+			fmt.Fprintf(w, "  %s\n", line)
+		}
+	} else if strings.HasPrefix(trimmed, "- Risk Level") {
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) == 2 {
+			severity := strings.TrimSpace(parts[1])
+			var colored string
+			switch strings.ToLower(severity) {
+			case "critical", "high":
+				colored = Red.Sprint(severity)
+			case "medium":
+				colored = Yellow.Sprint(severity)
+			default:
+				colored = Dim(severity)
+			}
+			fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), colored)
+		} else {
+			fmt.Fprintf(w, "  %s\n", line)
+		}
+	} else if strings.HasPrefix(trimmed, "Targeted Component:") {
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) == 2 {
+			fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), Cyan.Sprint(strings.TrimSpace(parts[1])))
+		} else {
+			fmt.Fprintf(w, "  %s\n", line)
+		}
+	} else {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+}
+
 func PrintVersionInfo(w io.Writer, version, commit, date, goVersion, osArch string) {
 	sep := DimWhite.Sprint("─────────────────────────────────────────────────────")
 	fmt.Fprintln(w, sep)
