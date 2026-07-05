@@ -1,78 +1,101 @@
-# serahkan-cli
+# SERAHKAN-CLI
 
-A high-efficiency Go-based wrapper orchestration engine for [Nuclei](https://github.com/projectdiscovery/nuclei). serahkan-cli wraps raw Nuclei execution, applies structured argument construction through configurable profiles, parses JSONL output in real time, and routes filtered findings to a local LLM for defensive analysis — all within a single command.
+An AI-powered Nuclei orchestration engine built with Go. `serahkan-cli` is a lightweight, lightning-fast CLI wrapper designed for modern vulnerability assessment, engineered to seamlessly integrate with local LLMs (Ollama/LM Studio) for instant defensive analysis and remediation playbook generation.
 
-## Core Capabilities
+## Key Features
 
-- Profile-driven scan orchestration with six tuned presets covering fast triage through maximum-coverage auditing.
-- Real-time JSONL parsing with per-severity filtering, malformed-line resilience, and structured result aggregation.
-- WAF interception detection that automatically identifies and excludes findings blocked by security filters (Cloudflare, rate limiting, access denial).
-- URL sanitization that strips tracking and challenge tokens from target URLs before execution.
-- Dynamic concurrency and rate-limit control via global CLI flags that override any profile default.
-- Optional local LLM integration for automated defensive analysis of filtered findings.
-- Structured JSON output with full execution metadata, auth mode detection, and Nuclei stderr capture.
-- Transparent command construction via `--show-nuclei-command` with dynamic `-silent` suppression for full engine visibility.
+- **Native Configuration Wizard:** Setup your local AI endpoint and model once via `serahkan config` without touching configuration files manually.
+- **Smart Configuration Fallback:** Uses an elegant hierarchical priority system (`CLI Flags` > `config.yaml` > `Profile Defaults`).
+- **WAF-Aware Concurrency Control:** Embedded rate-limiting and sanitization mechanisms to optimize scanning speeds against strict target firewalls.
+- **Symmetric UI Terminal:** Beautiful ASCII art banner with aligned meta-summaries using rigid column layouts.
+- **Pure JSON Purity:** Dedicated `--output json` pipeline that emits strictly valid indented structural data, sanitized from terminal ANSI color codes.
 
-## Requirements
+## Installation & Setup
 
-- `nuclei` (or `nuclei.exe`) available in the working directory or on `PATH`.
-- A local AI endpoint reachable at the configured address (default: `http://127.0.0.1:1234/v1/chat/completions`). AI can be skipped with `--skip-ai`.
+### 1. Clone and Build Binary
 
-## Build and Install
-
-```powershell
+```cmd
+git clone https://github.com/Zyrexnn/serahkan-cli.git
+cd serahkan-cli
 go build -o serahkan.exe .
-.\serahkan.exe version
 ```
 
-Build with embedded metadata:
+### 2. Register Global Path (Optional)
 
-```powershell
-$env:SERAHKAN_VERSION="0.2.0"
-$env:SERAHKAN_COMMIT="abc1234"
-.\scripts\build.ps1
-.\serahkan.exe version
+Move `serahkan.exe` into a dedicated folder and append it to your Windows System Environment Variables so you can invoke `serahkan` anywhere.
+
+## Usage Workflow
+
+### 1. One-Time Setup (Configure AI Environment)
+
+Initialize your local LLM orchestrator parameters. This generates or updates the local `config.yaml`:
+
+```cmd
+serahkan config --endpoint http://127.0.0.1:1234/v1/chat/completions --model qwen2.5-coder-1.5b-instruct
+```
+
+### 2. Execute Scanning (AI Auto-Enabled)
+
+Run your targeted vulnerability scan. The tool automatically detects your `config.yaml` parameters and pipes results to your local AI:
+
+```cmd
+serahkan scan --target https://example.com/login --profile benchmark-web
+```
+
+### 3. Pure JSON Output (For Pipelines/Dashboards)
+
+Generate raw structural pretty-printed JSON logs, entirely isolated from styling pipelines:
+
+```cmd
+serahkan scan --target https://example.com/login --profile benchmark-web --output json
+```
+
+### 4. Diagnostics Mode (Skip AI)
+
+Bypass AI report generation on the fly to fetch instant target metrics:
+
+```cmd
+serahkan scan --target https://example.com/login --profile benchmark-web --skip-ai
 ```
 
 ## Commands
+
+### `config`
+
+Manage persisted CLI configuration. Use `--endpoint` and `--model` flags to write values directly to `config.yaml`.
+
+```cmd
+serahkan config --endpoint http://127.0.0.1:1234/v1/chat/completions --model qwen2.5-coder-1.5b-instruct
+serahkan config view
+serahkan config set ai.endpoint http://127.0.0.1:1234/v1/chat/completions
+serahkan config set ai.model qwen2.5-coder-1.5b-instruct
+serahkan config unset ai.api_key
+```
 
 ### `scan`
 
 The primary command. Runs a Nuclei scan against a target, applies profile-driven argument construction, filters results by severity, and optionally sends findings to a local LLM for defensive analysis.
 
-```powershell
-go run . scan --target http://example.com
-go run . scan --target http://example.com --profile deep --output json
-go run . scan --target http://example.com --profile brutal-aggressive --skip-ai
+```cmd
+serahkan scan --target http://example.com
+serahkan scan --target http://example.com --profile deep --output json
+serahkan scan --target http://example.com --profile brutal-aggressive --skip-ai
 ```
 
 ### `doctor`
 
 Checks that `nuclei` is resolvable and that the configured AI endpoint is reachable.
 
-```powershell
-go run . doctor
+```cmd
+serahkan doctor
 ```
-
-### `config`
-
-View, set, or unset persistent configuration values.
-
-```powershell
-go run . config view
-go run . config set ai.endpoint http://127.0.0.1:1234/v1/chat/completions
-go run . config set ai.model qwen2.5-coder-1.5b-instruct
-go run . config unset ai.api_key
-```
-
-Supported keys: `ai.endpoint`, `ai.model`, `ai.api_key`.
 
 ### `version`
 
 Displays application version, build commit, build date, Go version, and OS/arch.
 
-```powershell
-go run . version
+```cmd
+serahkan version
 ```
 
 ## Scan Profiles
@@ -81,11 +104,11 @@ Profiles control the full set of Nuclei arguments: timeouts, retries, severity f
 
 | Profile | Severity | Timeout | Scan Cap | Retries | OOB | Headless | DAST | Default Ignored Tags | Types | AI |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `fast` | high, critical | 8s | 60s | 0 | disabled | off | off | — | http | skipped |
-| `balanced` | medium, high, critical | 10s | 120s | 0 | disabled | off | off | — | http | enabled |
-| `deep` | medium, high, critical | 30s | 300s | 2 | enabled | off | off | — | — | enabled |
+| `fast` | high, critical | 8s | 60s | 0 | disabled | off | off | -- | http | skipped |
+| `balanced` | medium, high, critical | 10s | 120s | 0 | disabled | off | off | -- | http | enabled |
+| `deep` | medium, high, critical | 30s | 300s | 2 | enabled | off | off | -- | -- | enabled |
 | `web-full` | info, low, medium, high, critical | 30s | 420s | 1 | enabled | on | on | fuzz | http, headless, javascript | enabled |
-| `benchmark-web` | info, low, medium, high, critical | 25s | 300s | 3 | disabled | off | off | — | http | skipped |
+| `benchmark-web` | info, low, medium, high, critical | 25s | 300s | 3 | disabled | off | off | -- | http | skipped |
 | `brutal-aggressive` | info, low, medium, high, critical | 45s | 600s | 3 | enabled | on | on | cve, sqli, xss, lfi, rce, misconfig, exposure | http, headless, javascript, dns | skipped |
 
 ### Profile Details
@@ -94,58 +117,58 @@ Profiles control the full set of Nuclei arguments: timeouts, retries, severity f
 
 High-speed baseline. Restricts to high and critical severities, skips AI analysis, and limits to HTTP-only templates. Intended for quick go/no-go assessments.
 
-```powershell
-go run . scan --target http://example.com --profile fast
+```cmd
+serahkan scan --target http://example.com --profile fast
 ```
 
 #### `balanced`
 
 The default. Medium-throughput configuration with AI analysis enabled and out-of-band interaction disabled. Suitable for routine daily scanning.
 
-```powershell
-go run . scan --target http://example.com
-go run . scan --target http://example.com --profile balanced --ai-model llama-3.2-3b-instruct
+```cmd
+serahkan scan --target http://example.com
+serahkan scan --target http://example.com --profile balanced --ai-model llama-3.2-3b-instruct
 ```
 
 #### `deep`
 
 Extended depth analysis. Increases timeouts, enables out-of-band interaction templates, and retries unstable endpoints. AI analysis is enabled with a longer timeout.
 
-```powershell
-go run . scan --target http://example.com --profile deep
-go run . scan --target http://example.com --profile deep --include-http --include-oob
+```cmd
+serahkan scan --target http://example.com --profile deep
+serahkan scan --target http://example.com --profile deep --include-http --include-oob
 ```
 
 #### `web-full`
 
 Comprehensive web-vulnerability hunting. Enables headless browser templates, DAST/fuzz scanning, out-of-band interaction, and includes the `fuzz` default-ignored tag. Captures raw HTTP request/response data.
 
-```powershell
-go run . scan --target http://example.com --profile web-full
-go run . scan --target http://example.com --profile web-full --cookie "session=abc123"
+```cmd
+serahkan scan --target http://example.com --profile web-full
+serahkan scan --target http://example.com --profile web-full --cookie "session=abc123"
 ```
 
 #### `benchmark-web`
 
 Specialized profile optimized for public vulnerable demo environments (e.g., DVWA, WebGoat, testphp). Disables DAST isolation and the `-itags fuzz` restriction to ensure Nuclei loads the complete set of standard HTTP vulnerability templates without filtering. Uses elevated connection retries (3) to handle unstable demo endpoints gracefully. The `web-vulns` focus is applied by default, injecting `xss`, `sqli`, `lfi`, `rfi`, `ssrf`, `ssti`, and `redirect` tags.
 
-```powershell
-go run . scan --target http://testphp.vulnweb.com/ --profile benchmark-web
-go run . scan --target http://testphp.vulnweb.com/ --profile benchmark-web --output json
+```cmd
+serahkan scan --target http://testphp.vulnweb.com/ --profile benchmark-web
+serahkan scan --target http://testphp.vulnweb.com/ --profile benchmark-web --output json
 ```
 
 #### `brutal-aggressive`
 
 Maximum throughput coverage. Sets full severity inclusion, 600-second scan cap, elevated concurrency (300) and rate limit (800), headless and DAST enabled, out-of-band interaction active, and 3 retries. The default-ignored tag set is broadened to `cve`, `sqli`, `xss`, `lfi`, `rce`, `misconfig`, and `exposure` to maximize template loading across core web-application vulnerability classes.
 
-```powershell
-go run . scan --target http://example.com --profile brutal-aggressive --skip-ai
-go run . scan --target http://example.com --profile brutal-aggressive --output json
+```cmd
+serahkan scan --target http://example.com --profile brutal-aggressive --skip-ai
+serahkan scan --target http://example.com --profile brutal-aggressive --output json
 ```
 
 ## Focus Presets
 
-The `--focus` flag applies a targeted template or tag injection on top of the active profile. Presets are additive — they append tags or template paths without removing flags set by the profile.
+The `--focus` flag applies a targeted template or tag injection on top of the active profile. Presets are additive -- they append tags or template paths without removing flags set by the profile.
 
 | Preset | Behavior |
 |---|---|
@@ -155,10 +178,10 @@ The `--focus` flag applies a targeted template or tag injection on top of the ac
 | `misconfig` | Appends `-tags misconfig,exposure,config` for misconfiguration-focused scanning. |
 | `cves` | Appends `-t http/cves` to run HTTP-layer CVE templates. |
 
-```powershell
-go run . scan --target http://example.com --focus web-vulns
-go run . scan --target http://example.com --focus cves --severity high,critical
-go run . scan --target http://example.com --focus misconfig --profile deep
+```cmd
+serahkan scan --target http://example.com --focus web-vulns
+serahkan scan --target http://example.com --focus cves --severity high,critical
+serahkan scan --target http://example.com --focus misconfig --profile deep
 ```
 
 ## Advanced Observability Flags
@@ -167,9 +190,9 @@ go run . scan --target http://example.com --focus misconfig --profile deep
 
 Prints the exact Nuclei argument array constructed by the wrapper. When this flag is active, the internal `-silent` flag is dynamically removed from the execution arguments, exposing Nuclei's template-loading logs, match notifications, and stderr diagnostics in real time.
 
-```powershell
-go run . scan --target http://example.com --show-nuclei-command
-go run . scan --target http://example.com --profile benchmark-web --show-nuclei-command --output json
+```cmd
+serahkan scan --target http://example.com --show-nuclei-command
+serahkan scan --target http://example.com --profile benchmark-web --show-nuclei-command --output json
 ```
 
 Use this to verify which flags the wrapper injects, diagnose template-starvation issues, or confirm that specific tags and templates are being loaded by Nuclei.
@@ -178,18 +201,18 @@ Use this to verify which flags the wrapper injects, diagnose template-starvation
 
 Strips the wrapper down to minimal argument construction: no concurrency/rate-limit overrides, no `-no-banner`, no `-omit-raw`, and no `-irr`. Designed for direct comparison between wrapper-managed execution and raw Nuclei behavior when diagnosing unexpected output.
 
-```powershell
-go run . scan --target http://example.com --parity-mode --show-nuclei-command
-go run . scan --target http://example.com --parity-mode --output json
+```cmd
+serahkan scan --target http://example.com --parity-mode --show-nuclei-command
+serahkan scan --target http://example.com --parity-mode --output json
 ```
 
 ### `--concurrency` and `--rate-limit`
 
 Global CLI flags that override profile-hardcoded concurrency and rate-limit values. When explicitly passed via the terminal, these values take precedence over any defaults set by the active profile (e.g., brutal-aggressive's 300/800). When not set, the profile defaults apply normally.
 
-```powershell
-go run . scan --target http://example.com --profile brutal-aggressive --concurrency 100 --rate-limit 200
-go run . scan --target http://example.com --concurrency 50 --rate-limit 100
+```cmd
+serahkan scan --target http://example.com --profile brutal-aggressive --concurrency 100 --rate-limit 200
+serahkan scan --target http://example.com --concurrency 50 --rate-limit 100
 ```
 
 This allows fine-tuning throughput without modifying profiles, useful for targets with strict rate-limiting or resource-constrained environments.
@@ -205,13 +228,13 @@ Detected and removed tokens include:
 - Marketing automation (`_hsenc`, `_hsm`, `oly_enc_id`, `ss_compile`, `vero_id`)
 - Generic tracking parameters (`trk`)
 
-```powershell
-# Tracking tokens are stripped automatically
-go run . scan --target "http://example.com/?__cf_chl_f_tk=abc123&page=1"
-# Effective target: http://example.com/?page=1
+```cmd
+:: Tracking tokens are stripped automatically
+serahkan scan --target "http://example.com/?__cf_chl_f_tk=abc123&page=1"
+:: Effective target: http://example.com/?page=1
 
-# Clean URLs pass through unchanged
-go run . scan --target http://example.com
+:: Clean URLs pass through unchanged
+serahkan scan --target http://example.com
 ```
 
 ## WAF Interception Detection
@@ -229,9 +252,9 @@ Detected patterns include:
 
 The JSON output reports WAF-blocked findings via the `waf_blocked` field and includes a diagnostic message in `skipped_reasons` when any findings are intercepted.
 
-```powershell
-go run . scan --target http://example.com --profile benchmark-web --output json
-# waf_blocked will show count of intercepted findings
+```cmd
+serahkan scan --target http://example.com --profile benchmark-web --output json
+:: waf_blocked will show count of intercepted findings
 ```
 
 ## Output Schemas
@@ -240,8 +263,8 @@ go run . scan --target http://example.com --profile benchmark-web --output json
 
 Default output. Prints an ASCII summary with target, finding count, AI status, duration, and the full AI defensive analysis report. When no findings match, the output lists active diagnostic reasons (disabled OOB, severity filtering, unauthenticated state, scan timeout caps, etc.).
 
-```powershell
-go run . scan --target http://example.com --profile balanced
+```cmd
+serahkan scan --target http://example.com --profile balanced
 ```
 
 ### JSON Mode
@@ -270,9 +293,9 @@ Machine-readable output. Returns a single JSON object with the following structu
 | `duration_seconds` | int | Total scan duration in seconds. |
 | `generated_at_unix_utc` | int | Unix timestamp of report generation. |
 
-```powershell
-go run . scan --target http://example.com --output json
-go run . scan --target http://example.com --profile benchmark-web --output json > report.json
+```cmd
+serahkan scan --target http://example.com --output json
+serahkan scan --target http://example.com --profile benchmark-web --output json > report.json
 ```
 
 ## Full Reference
@@ -320,48 +343,48 @@ go run . scan --target http://example.com --profile benchmark-web --output json 
 
 ### Configuration Precedence
 
-```text
-flag > environment variable > config file > default
+```
+CLI Flags > config.yaml > Profile Defaults > Code Defaults
 ```
 
 Supported environment variables: `SERAHKAN_AI_ENDPOINT`, `SERAHKAN_AI_MODEL`, `SERAHKAN_AI_API_KEY`, `SERAHKAN_CONFIG`.
 
 ### Recommended Usage
 
-```powershell
-# Quick baseline check
-go run . scan --target http://example.com --profile fast
+```cmd
+:: Quick baseline check
+serahkan scan --target http://example.com --profile fast
 
-# Routine balanced scan with AI analysis
-go run . scan --target http://example.com
+:: Routine balanced scan with AI analysis
+serahkan scan --target http://example.com
 
-# Deep scan with full web coverage and OOB
-go run . scan --target http://example.com --profile deep --include-oob
+:: Deep scan with full web coverage and OOB
+serahkan scan --target http://example.com --profile deep --include-oob
 
-# Web vulnerability hunting with headless and DAST
-go run . scan --target http://example.com --profile web-full
+:: Web vulnerability hunting with headless and DAST
+serahkan scan --target http://example.com --profile web-full
 
-# Benchmark a public vulnerable demo target
-go run . scan --target http://testphp.vulnweb.com/ --profile benchmark-web
+:: Benchmark a public vulnerable demo target
+serahkan scan --target http://testphp.vulnweb.com/ --profile benchmark-web
 
-# Maximum coverage for authorized internal targets
-go run . scan --target http://internal-app.local --profile brutal-aggressive --skip-ai
+:: Maximum coverage for authorized internal targets
+serahkan scan --target http://internal-app.local --profile brutal-aggressive --skip-ai
 
-# Override concurrency and rate-limit for constrained targets
-go run . scan --target http://example.com --profile brutal-aggressive --concurrency 100 --rate-limit 200
+:: Override concurrency and rate-limit for constrained targets
+serahkan scan --target http://example.com --profile brutal-aggressive --concurrency 100 --rate-limit 200
 
-# Authenticated scan with session cookie
-go run . scan --target http://example.com --profile web-full --cookie "session=abc123"
+:: Authenticated scan with session cookie
+serahkan scan --target http://example.com --profile web-full --cookie "session=abc123"
 
-# Verify wrapper argument construction
-go run . scan --target http://example.com --show-nuclei-command
+:: Verify wrapper argument construction
+serahkan scan --target http://example.com --show-nuclei-command
 
-# Raw Nuclei parity comparison
-go run . scan --target http://example.com --parity-mode --show-nuclei-command --output json
+:: Raw Nuclei parity comparison
+serahkan scan --target http://example.com --parity-mode --show-nuclei-command --output json
 
-# CVE-focused scan with custom severity
-go run . scan --target http://example.com --focus cves --severity high,critical
+:: CVE-focused scan with custom severity
+serahkan scan --target http://example.com --focus cves --severity high,critical
 
-# JSON report saved to file
-go run . scan --target http://example.com --profile balanced --output json > scan-report.json
+:: JSON report saved to file
+serahkan scan --target http://example.com --profile balanced --output json > scan-report.json
 ```
