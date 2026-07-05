@@ -12,6 +12,7 @@ import (
 
 	"github.com/Zyrexnn/serahkan-cli/internal/ai"
 	cfgstore "github.com/Zyrexnn/serahkan-cli/internal/config"
+	"github.com/Zyrexnn/serahkan-cli/internal/exporter"
 	"github.com/Zyrexnn/serahkan-cli/internal/parser"
 	"github.com/Zyrexnn/serahkan-cli/internal/runner"
 	"github.com/Zyrexnn/serahkan-cli/internal/style"
@@ -57,6 +58,7 @@ var scanOptions struct {
 	aiTimeout                 int
 	limit                     int
 	output                    string
+	export                    string
 }
 
 var severityRank = map[string]int{
@@ -99,6 +101,13 @@ var scanCmd = &cobra.Command{
 		logOut := cmd.ErrOrStderr()
 		startedAt := time.Now()
 
+		var exportBuf *strings.Builder
+		var actualOut io.Writer = out
+		if scanOptions.export != "" {
+			exportBuf = &strings.Builder{}
+			actualOut = io.MultiWriter(out, exportBuf)
+		}
+
 		applyScanConfigDefaults(cmd)
 		applyScanProfile(cmd)
 		applyScanConfigAIOverride(cmd)
@@ -126,6 +135,9 @@ var scanCmd = &cobra.Command{
 			return err
 		}
 		if err := validateFocus(scanOptions.focus); err != nil {
+			return err
+		}
+		if err := validateExportMode(scanOptions.export); err != nil {
 			return err
 		}
 
@@ -212,6 +224,7 @@ var scanCmd = &cobra.Command{
 		aiUsed := false
 		aiStatus := "not_used"
 		aiError := ""
+		streamed := false
 
 		scanCfg := cfgstore.LoadScanConfig()
 		if scanCfg.AIEndpoint != "" && scanCfg.AIModel != "" && !cmd.Flags().Changed("skip-ai") {
@@ -246,16 +259,51 @@ var scanCmd = &cobra.Command{
 				aiConfig.Timeout = time.Duration(scanOptions.aiTimeout) * time.Second
 			}
 
-			var aiErr error
-			analysis, aiErr = ai.SendToLocalAI(cmd.Context(), summary, aiConfig)
-			aiUsed = true
-			aiStatus = "ok"
-			if aiErr != nil {
-				fmt.Fprintf(logOut, "%s AI unavailable: %v\n", style.TagWarn, aiErr)
-				analysis = ""
-				aiUsed = false
-				aiStatus = "unavailable"
-				aiError = aiErr.Error()
+			if scanOptions.output == "json" {
+				var aiErr error
+				analysis, aiErr = ai.SendToLocalAI(cmd.Context(), summary, aiConfig)
+				aiUsed = true
+				aiStatus = "ok"
+				if aiErr != nil {
+					fmt.Fprintf(logOut, "%s AI unavailable: %v\n", style.TagWarn, aiErr)
+					analysis = ""
+					aiUsed = false
+					aiStatus = "unavailable"
+					aiError = aiErr.Error()
+				}
+			} else {
+				streamed = true
+				style.PrintAIReportHeader(actualOut)
+				var lineBuf strings.Builder
+				var aiErr error
+				analysis, aiErr = ai.StreamToLocalAI(cmd.Context(), summary, aiConfig, func(token string) {
+					lineBuf.WriteString(token)
+					for {
+						raw := lineBuf.String()
+						idx := strings.Index(raw, "\n")
+						if idx < 0 {
+							break
+						}
+						line := raw[:idx]
+						lineBuf.Reset()
+						lineBuf.WriteString(raw[idx+1:])
+						style.PrintAIReportLine(actualOut, line)
+					}
+				})
+				remaining := strings.TrimSpace(lineBuf.String())
+				if remaining != "" {
+					style.PrintAIReportLine(actualOut, remaining)
+				}
+				style.PrintAIReportFooter(actualOut)
+				aiUsed = true
+				aiStatus = "ok"
+				if aiErr != nil {
+					fmt.Fprintf(logOut, "%s AI unavailable: %v\n", style.TagWarn, aiErr)
+					analysis = ""
+					aiUsed = false
+					aiStatus = "unavailable"
+					aiError = aiErr.Error()
+				}
 			}
 		}
 
@@ -268,11 +316,41 @@ var scanCmd = &cobra.Command{
 			return emitJSONReport(out, scanOptions.target, allowedSeverities, findings, strings.TrimSpace(validatedReport), aiUsed, aiStatus, aiError, time.Since(startedAt), scanResult, diagnostics)
 		}
 
-		style.PrintScanSummary(out, scanOptions.target, len(findings), aiUsed, aiStatus, formatDuration(time.Since(startedAt)))
+		style.PrintScanSummary(actualOut, scanOptions.target, len(findings), aiUsed, aiStatus, formatDuration(time.Since(startedAt)))
 		if aiError != "" {
-			fmt.Fprintf(out, "  %s  %s\n", style.Yellow.Sprint("AI Error:"), style.Warn(aiError))
+			fmt.Fprintf(actualOut, "  %s  %s\n", style.Yellow.Sprint("AI Error:"), style.Warn(aiError))
 		}
-		style.PrintAIReport(out, strings.TrimSpace(validatedReport))
+		if !streamed {
+			style.PrintAIReport(actualOut, strings.TrimSpace(validatedReport))
+		}
+
+		if scanOptions.export != "" && exportBuf != nil {
+			reportData := exporter.ReportData{
+				Target:       scanOptions.target,
+				Findings:     strings.TrimSpace(validatedReport),
+				AISummary:    exportBuf.String(),
+				ScanDuration: formatDuration(time.Since(startedAt)),
+				Timestamp:    time.Now(),
+				FindingCount: len(findings),
+				AIUsed:       aiUsed,
+				AIStatus:     aiStatus,
+			}
+
+			var savedPath string
+			var exportErr error
+			switch strings.ToLower(scanOptions.export) {
+			case "html":
+				savedPath, exportErr = exporter.ExportHTML(reportData)
+			case "markdown":
+				savedPath, exportErr = exporter.ExportMarkdown(reportData)
+			}
+
+			if exportErr != nil {
+				fmt.Fprintf(logOut, "%s export failed: %v\n", style.TagWarn, exportErr)
+			} else {
+				fmt.Fprintf(logOut, "%s report saved to %s\n", style.TagOK, style.Target(savedPath))
+			}
+		}
 
 		return nil
 	},
@@ -317,6 +395,7 @@ func init() {
 	scanCmd.Flags().IntVar(&scanOptions.aiTimeout, "ai-timeout", 25, "Timeout in seconds for AI completions")
 	scanCmd.Flags().IntVar(&scanOptions.limit, "limit", 5, "Maximum number of findings to send to AI for analysis")
 	scanCmd.Flags().StringVar(&scanOptions.output, "output", "text", "Output format: text or json")
+	scanCmd.Flags().StringVar(&scanOptions.export, "export", "", "Export report to file: html or markdown")
 
 	_ = scanCmd.MarkFlagRequired("target")
 }
@@ -392,6 +471,15 @@ func validateFocus(value string) error {
 		return nil
 	default:
 		return fmt.Errorf("invalid focus %q. Supported values: exposures, web-vulns, fuzz, misconfig, cves", value)
+	}
+}
+
+func validateExportMode(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "html", "markdown":
+		return nil
+	default:
+		return fmt.Errorf("invalid export mode %q. Supported values: html, markdown", value)
 	}
 }
 
@@ -793,22 +881,28 @@ func formatFindingsSummary(findings []parser.NucleiFinding, maxFindings int) (st
 	var builder strings.Builder
 	builder.WriteString("Filtered Nuclei findings requiring defensive analysis:\n")
 
-	sort.Slice(findings, func(i, j int) bool {
-		return severityRank[strings.ToLower(findings[i].Severity)] > severityRank[strings.ToLower(findings[j].Severity)]
+	deduplicated := parser.DeduplicateFindings(findings)
+
+	sort.Slice(deduplicated, func(i, j int) bool {
+		return severityRank[strings.ToLower(deduplicated[i].Representative.Severity)] > severityRank[strings.ToLower(deduplicated[j].Representative.Severity)]
 	})
 
-	displayCount := len(findings)
+	displayCount := len(deduplicated)
 	if displayCount > maxFindings {
 		displayCount = maxFindings
 	}
 
 	for i := 0; i < displayCount; i++ {
-		finding := findings[i]
+		dup := deduplicated[i]
+		finding := dup.Representative
 		fmt.Fprintf(&builder, "\nFinding %d\n", i+1)
 		fmt.Fprintf(&builder, "Template ID: %s\n", finding.TemplateID)
 		fmt.Fprintf(&builder, "Name: %s\n", finding.Name)
 		fmt.Fprintf(&builder, "Severity: %s\n", finding.Severity)
-		fmt.Fprintf(&builder, "Matched At: %s\n", finding.MatchedAt)
+		fmt.Fprintf(&builder, "Affected URLs (%d):\n", len(dup.AffectedURLs))
+		for _, url := range dup.AffectedURLs {
+			fmt.Fprintf(&builder, "  - %s\n", url)
+		}
 
 		if finding.Host != "" {
 			fmt.Fprintf(&builder, "Host: %s\n", finding.Host)

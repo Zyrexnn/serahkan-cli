@@ -181,6 +181,28 @@ func TestValidateFocus(t *testing.T) {
 	}
 }
 
+func TestValidateExportMode(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{input: "", wantErr: false},
+		{input: "html", wantErr: false},
+		{input: "markdown", wantErr: false},
+		{input: "HTML", wantErr: false},
+		{input: "MARKDOWN", wantErr: false},
+		{input: "pdf", wantErr: true},
+		{input: "xml", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		err := validateExportMode(tt.input)
+		if (err != nil) != tt.wantErr {
+			t.Fatalf("validateExportMode(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
+		}
+	}
+}
+
 func makeCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "scan"}
 	cmd.Flags().String("severity", "", "")
@@ -384,6 +406,7 @@ func zeroScanOptions() struct {
 	aiTimeout                 int
 	limit                     int
 	output                    string
+	export                    string
 } {
 	return struct {
 		target                    string
@@ -424,6 +447,7 @@ func zeroScanOptions() struct {
 		aiTimeout                 int
 		limit                     int
 		output                    string
+		export                    string
 	}{}
 }
 
@@ -595,6 +619,51 @@ func TestFormatFindingsSummary(t *testing.T) {
 		}
 		if !strings.Contains(summary, "Curl Command: Not available") {
 			t.Error("expected fallback message 'Curl Command: Not available' when CurlCommand is empty")
+		}
+	})
+
+	t.Run("deduplication merges same template-id", func(t *testing.T) {
+		dupFindings := []parser.NucleiFinding{
+			{TemplateID: "xss", Name: "XSS", Severity: "high", MatchedAt: "http://a.com/1", CurlCommand: "curl http://a.com/1"},
+			{TemplateID: "xss", Name: "XSS", Severity: "high", MatchedAt: "http://a.com/2", CurlCommand: "curl http://a.com/2"},
+			{TemplateID: "xss", Name: "XSS", Severity: "high", MatchedAt: "http://a.com/3", CurlCommand: "curl http://a.com/3"},
+		}
+
+		summary, err := formatFindingsSummary(dupFindings, 10)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !strings.Contains(summary, "Finding 1\nTemplate ID: xss") {
+			t.Error("expected single deduplicated finding")
+		}
+		if strings.Contains(summary, "Finding 2") {
+			t.Error("expected no second finding after deduplication")
+		}
+		if !strings.Contains(summary, "Affected URLs (3):") {
+			t.Error("expected affected URLs count of 3")
+		}
+		if !strings.Contains(summary, "http://a.com/1") || !strings.Contains(summary, "http://a.com/2") || !strings.Contains(summary, "http://a.com/3") {
+			t.Error("expected all 3 affected URLs to be listed")
+		}
+	})
+
+	t.Run("deduplication keeps different template-ids separate", func(t *testing.T) {
+		mixedFindings := []parser.NucleiFinding{
+			{TemplateID: "xss", Name: "XSS", Severity: "high", MatchedAt: "http://a.com/1"},
+			{TemplateID: "sqli", Name: "SQLi", Severity: "critical", MatchedAt: "http://a.com/2"},
+		}
+
+		summary, err := formatFindingsSummary(mixedFindings, 10)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !strings.Contains(summary, "Template ID: xss") {
+			t.Error("expected xss finding")
+		}
+		if !strings.Contains(summary, "Template ID: sqli") {
+			t.Error("expected sqli finding")
 		}
 	})
 }
