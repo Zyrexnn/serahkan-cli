@@ -59,6 +59,12 @@ type ParseResult struct {
 	WAFBlocked         int
 }
 
+type DeduplicatedFinding struct {
+	Representative NucleiFinding
+	AffectedURLs   []string
+	Count          int
+}
+
 func ParseAndFilter(rawOutput string, allowedSeverities []string) ([]NucleiFinding, error) {
 	result, err := ParseAndFilterDetailed(strings.NewReader(rawOutput), allowedSeverities, Options{})
 	if err != nil {
@@ -166,4 +172,46 @@ func isWAFBlocked(finding NucleiFinding) bool {
 		}
 	}
 	return false
+}
+
+func DeduplicateFindings(findings []NucleiFinding) []DeduplicatedFinding {
+	type groupKey struct {
+		templateID string
+		name       string
+		severity   string
+	}
+
+	groups := make(map[groupKey]*DeduplicatedFinding)
+	order := make([]groupKey, 0)
+
+	for _, f := range findings {
+		key := groupKey{
+			templateID: strings.TrimSpace(f.TemplateID),
+			name:       strings.TrimSpace(f.Name),
+			severity:   strings.ToLower(strings.TrimSpace(f.Severity)),
+		}
+
+		if key.templateID == "" && key.name == "" {
+			key.name = f.MatchedAt
+		}
+
+		if existing, ok := groups[key]; ok {
+			existing.AffectedURLs = append(existing.AffectedURLs, f.MatchedAt)
+			existing.Count++
+		} else {
+			groups[key] = &DeduplicatedFinding{
+				Representative: f,
+				AffectedURLs:   []string{f.MatchedAt},
+				Count:          1,
+			}
+			order = append(order, key)
+		}
+	}
+
+	result := make([]DeduplicatedFinding, 0, len(order))
+	for _, key := range order {
+		result = append(result, *groups[key])
+	}
+
+	return result
 }

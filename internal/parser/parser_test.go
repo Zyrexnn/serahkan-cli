@@ -242,3 +242,89 @@ type errorReader struct{}
 func (e *errorReader) Read(p []byte) (n int, err error) {
 	return 0, io.ErrClosedPipe
 }
+
+func TestDeduplicateFindings(t *testing.T) {
+	t.Run("same template-id merges into one", func(t *testing.T) {
+		findings := []NucleiFinding{
+			{TemplateID: "missing-header", Name: "Missing Header", Severity: "high", MatchedAt: "http://example.com/page1"},
+			{TemplateID: "missing-header", Name: "Missing Header", Severity: "high", MatchedAt: "http://example.com/page2"},
+			{TemplateID: "missing-header", Name: "Missing Header", Severity: "high", MatchedAt: "http://example.com/page3"},
+		}
+
+		result := DeduplicateFindings(findings)
+		if len(result) != 1 {
+			t.Fatalf("expected 1 deduplicated finding, got %d", len(result))
+		}
+		if result[0].Count != 3 {
+			t.Fatalf("expected count=3, got %d", result[0].Count)
+		}
+		if len(result[0].AffectedURLs) != 3 {
+			t.Fatalf("expected 3 affected URLs, got %d", len(result[0].AffectedURLs))
+		}
+	})
+
+	t.Run("different template-ids remain separate", func(t *testing.T) {
+		findings := []NucleiFinding{
+			{TemplateID: "xss", Name: "XSS", Severity: "high", MatchedAt: "http://example.com/1"},
+			{TemplateID: "sqli", Name: "SQLi", Severity: "critical", MatchedAt: "http://example.com/2"},
+		}
+
+		result := DeduplicateFindings(findings)
+		if len(result) != 2 {
+			t.Fatalf("expected 2 deduplicated findings, got %d", len(result))
+		}
+	})
+
+	t.Run("preserves order of first occurrence", func(t *testing.T) {
+		findings := []NucleiFinding{
+			{TemplateID: "low-vuln", Name: "Low Vuln", Severity: "low", MatchedAt: "http://example.com/a"},
+			{TemplateID: "high-vuln", Name: "High Vuln", Severity: "high", MatchedAt: "http://example.com/b"},
+			{TemplateID: "low-vuln", Name: "Low Vuln", Severity: "low", MatchedAt: "http://example.com/c"},
+		}
+
+		result := DeduplicateFindings(findings)
+		if len(result) != 2 {
+			t.Fatalf("expected 2 deduplicated findings, got %d", len(result))
+		}
+		if result[0].Representative.TemplateID != "low-vuln" {
+			t.Errorf("expected first to be low-vuln, got %q", result[0].Representative.TemplateID)
+		}
+		if result[1].Representative.TemplateID != "high-vuln" {
+			t.Errorf("expected second to be high-vuln, got %q", result[1].Representative.TemplateID)
+		}
+	})
+
+	t.Run("empty findings returns empty slice", func(t *testing.T) {
+		result := DeduplicateFindings([]NucleiFinding{})
+		if len(result) != 0 {
+			t.Fatalf("expected 0 deduplicated findings, got %d", len(result))
+		}
+	})
+
+	t.Run("keeps first finding as representative", func(t *testing.T) {
+		findings := []NucleiFinding{
+			{TemplateID: "xss", Name: "XSS", Severity: "high", MatchedAt: "http://a.com/1", Host: "a.com", CurlCommand: "curl http://a.com/1"},
+			{TemplateID: "xss", Name: "XSS", Severity: "high", MatchedAt: "http://b.com/2", Host: "b.com", CurlCommand: "curl http://b.com/2"},
+		}
+
+		result := DeduplicateFindings(findings)
+		if result[0].Representative.Host != "a.com" {
+			t.Errorf("expected representative host to be a.com, got %q", result[0].Representative.Host)
+		}
+		if result[0].Representative.CurlCommand != "curl http://a.com/1" {
+			t.Errorf("expected representative curl to be from first finding")
+		}
+	})
+
+	t.Run("same name different template-ids are separate", func(t *testing.T) {
+		findings := []NucleiFinding{
+			{TemplateID: "tpl-a", Name: "Missing Header", Severity: "high", MatchedAt: "http://example.com/1"},
+			{TemplateID: "tpl-b", Name: "Missing Header", Severity: "high", MatchedAt: "http://example.com/2"},
+		}
+
+		result := DeduplicateFindings(findings)
+		if len(result) != 2 {
+			t.Fatalf("expected 2 deduplicated findings (different template-ids), got %d", len(result))
+		}
+	})
+}
