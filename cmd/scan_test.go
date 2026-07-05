@@ -761,3 +761,42 @@ func TestWAFBlockedDiagnostics(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyScanConfigDefaults(t *testing.T) {
+	t.Run("config values applied when flags unset", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+
+		cmd := makeCommand()
+		applyScanConfigDefaults(cmd)
+
+		if scanOptions.rateLimit != 0 {
+			t.Fatalf("expected rate-limit=0 when no config file, got %d", scanOptions.rateLimit)
+		}
+		if scanOptions.concurrency != 0 {
+			t.Fatalf("expected concurrency=0 when no config file, got %d", scanOptions.concurrency)
+		}
+	})
+
+	t.Run("explicit flags override config defaults", func(t *testing.T) {
+		scanOptions = zeroScanOptions()
+		scanOptions.rateLimit = 200
+		scanOptions.concurrency = 100
+
+		cmd := makeCommand()
+		if err := cmd.Flags().Set("rate-limit", "200"); err != nil {
+			t.Fatalf("failed to set rate-limit flag: %v", err)
+		}
+		if err := cmd.Flags().Set("concurrency", "100"); err != nil {
+			t.Fatalf("failed to set concurrency flag: %v", err)
+		}
+
+		applyScanConfigDefaults(cmd)
+
+		if scanOptions.rateLimit != 200 {
+			t.Fatalf("expected explicit rate-limit=200 to be preserved, got %d", scanOptions.rateLimit)
+		}
+		if scanOptions.concurrency != 100 {
+			t.Fatalf("expected explicit concurrency=100 to be preserved, got %d", scanOptions.concurrency)
+		}
+	})
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Zyrexnn/serahkan-cli/internal/ai"
+	cfgstore "github.com/Zyrexnn/serahkan-cli/internal/config"
 	"github.com/Zyrexnn/serahkan-cli/internal/parser"
 	"github.com/Zyrexnn/serahkan-cli/internal/runner"
 	"github.com/Zyrexnn/serahkan-cli/internal/style"
@@ -98,12 +99,21 @@ var scanCmd = &cobra.Command{
 		logOut := cmd.ErrOrStderr()
 		startedAt := time.Now()
 
+		applyScanConfigDefaults(cmd)
 		applyScanProfile(cmd)
+		applyScanConfigAIOverride(cmd)
 
 		scanOptions.target = sanitizeTarget(scanOptions.target)
 
 		if cmd.Flags().Changed("ai-endpoint") {
 			scanOptions.skipAI = false
+		}
+
+		if cmd.Flags().Changed("skip-ai") {
+			if scanOptions.skipAI {
+				scanOptions.aiEndpoint = ""
+				scanOptions.aiModel = ""
+			}
 		}
 
 		if err := validateTarget(scanOptions.target); err != nil {
@@ -368,6 +378,45 @@ func validateFocus(value string) error {
 		return nil
 	default:
 		return fmt.Errorf("invalid focus %q. Supported values: exposures, web-vulns, fuzz, misconfig, cves", value)
+	}
+}
+
+func applyScanConfigDefaults(cmd *cobra.Command) {
+	scanCfg := cfgstore.LoadScanConfig()
+
+	setIfUnset := func(flagName string, value int, target *int) {
+		if !cmd.Flags().Changed(flagName) && *target == 0 && value > 0 {
+			*target = value
+		}
+	}
+
+	setIfUnset("rate-limit", scanCfg.RateLimit, &scanOptions.rateLimit)
+	setIfUnset("concurrency", scanCfg.Concurrency, &scanOptions.concurrency)
+
+	if !cmd.Flags().Changed("ai-endpoint") && scanCfg.AIEndpoint != "" {
+		scanOptions.aiEndpoint = scanCfg.AIEndpoint
+	}
+	if !cmd.Flags().Changed("ai-model") && scanCfg.AIModel != "" {
+		scanOptions.aiModel = scanCfg.AIModel
+	}
+
+	if scanCfg.AIEndpoint != "" && scanCfg.AIModel != "" && !cmd.Flags().Changed("skip-ai") {
+		scanOptions.skipAI = false
+	}
+}
+
+func applyScanConfigAIOverride(cmd *cobra.Command) {
+	scanCfg := cfgstore.LoadScanConfig()
+
+	if !cmd.Flags().Changed("ai-endpoint") && scanCfg.AIEndpoint != "" {
+		scanOptions.aiEndpoint = scanCfg.AIEndpoint
+	}
+	if !cmd.Flags().Changed("ai-model") && scanCfg.AIModel != "" {
+		scanOptions.aiModel = scanCfg.AIModel
+	}
+
+	if scanCfg.AIEndpoint != "" && scanCfg.AIModel != "" && !cmd.Flags().Changed("skip-ai") {
+		scanOptions.skipAI = false
 	}
 }
 
