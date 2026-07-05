@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const envConfigPath = "SERAHKAN_CONFIG"
@@ -21,6 +23,13 @@ type AIConfig struct {
 	APIKey         string `json:"api_key"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
 	RetryCount     int    `json:"retry_count"`
+}
+
+type ScanConfig struct {
+	RateLimit   int    `yaml:"rate-limit"`
+	Concurrency int    `yaml:"concurrency"`
+	AIEndpoint  string `yaml:"ai-endpoint"`
+	AIModel     string `yaml:"ai-model"`
 }
 
 func Load() (Config, string, error) {
@@ -97,4 +106,86 @@ func Path() (string, error) {
 	}
 
 	return filepath.Join(dir, "serahkan", "config.json"), nil
+}
+
+func LoadScanConfig() ScanConfig {
+	return loadScanConfigWithDirs(func() (string, error) { return os.Getwd() }, func() (string, error) { return os.UserHomeDir() })
+}
+
+func loadScanConfigWithDirs(wdFn func() (string, error), homeFn func() (string, error)) ScanConfig {
+	var cfg ScanConfig
+
+	if path, err := findConfigYAMLWithDirs(wdFn, homeFn); err == nil && path != "" {
+		data, readErr := os.ReadFile(path)
+		if readErr == nil {
+			_ = yaml.Unmarshal(data, &cfg)
+		}
+	}
+
+	return cfg
+}
+
+func findConfigYAML() (string, error) {
+	return findConfigYAMLWithDirs(func() (string, error) { return os.Getwd() }, func() (string, error) { return os.UserHomeDir() })
+}
+
+func findConfigYAMLWithDirs(wdFn func() (string, error), homeFn func() (string, error)) (string, error) {
+	if wd, err := wdFn(); err == nil {
+		local := filepath.Join(wd, "config.yaml")
+		if _, err := os.Stat(local); err == nil {
+			return local, nil
+		}
+	}
+
+	if home, err := homeFn(); err == nil {
+		homePath := filepath.Join(home, "config.yaml")
+		if _, err := os.Stat(homePath); err == nil {
+			return homePath, nil
+		}
+	}
+
+	return "", fmt.Errorf("no config.yaml found")
+}
+
+func ConfigYAMLPath() (string, error) {
+	if wd, err := os.Getwd(); err == nil {
+		local := filepath.Join(wd, "config.yaml")
+		if _, err := os.Stat(local); err == nil {
+			return local, nil
+		}
+		return local, nil
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		homePath := filepath.Join(home, "config.yaml")
+		if _, err := os.Stat(homePath); err == nil {
+			return homePath, nil
+		}
+		return homePath, nil
+	}
+
+	return "", fmt.Errorf("cannot determine config.yaml path")
+}
+
+func SaveScanConfig(cfg ScanConfig) (string, error) {
+	path, err := ConfigYAMLPath()
+	if err != nil {
+		return "", err
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode scan config: %w", err)
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", fmt.Errorf("failed to write config: %w", err)
+	}
+
+	return path, nil
 }

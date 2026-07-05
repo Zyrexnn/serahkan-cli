@@ -65,3 +65,105 @@ func TestPathUsesOverride(t *testing.T) {
 		t.Fatalf("Path() = %q, want %q", path, override)
 	}
 }
+
+func TestLoadScanConfigReturnsZeroWhenNoFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(t.TempDir(), "fakehome")
+
+	wdFn := func() (string, error) { return tmpDir, nil }
+	homeFn := func() (string, error) { return homeDir, nil }
+
+	cfg := loadScanConfigWithDirs(wdFn, homeFn)
+	if cfg.RateLimit != 0 || cfg.Concurrency != 0 {
+		t.Fatalf("expected zero-value scan config, got %+v", cfg)
+	}
+}
+
+func TestLoadScanConfigFromProjectRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(t.TempDir(), "fakehome")
+
+	wdFn := func() (string, error) { return tmpDir, nil }
+	homeFn := func() (string, error) { return homeDir, nil }
+
+	yamlContent := "rate-limit: 800\nconcurrency: 300\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	cfg := loadScanConfigWithDirs(wdFn, homeFn)
+	if cfg.RateLimit != 800 {
+		t.Fatalf("expected rate-limit=800, got %d", cfg.RateLimit)
+	}
+	if cfg.Concurrency != 300 {
+		t.Fatalf("expected concurrency=300, got %d", cfg.Concurrency)
+	}
+}
+
+func TestLoadScanConfigFromHomeDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	wdFn := func() (string, error) { return tmpDir, nil }
+	homeFn := func() (string, error) { return homeDir, nil }
+
+	yamlContent := "rate-limit: 400\nconcurrency: 150\n"
+	if err := os.WriteFile(filepath.Join(homeDir, "config.yaml"), []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	cfg := loadScanConfigWithDirs(wdFn, homeFn)
+	if cfg.RateLimit != 400 {
+		t.Fatalf("expected rate-limit=400, got %d", cfg.RateLimit)
+	}
+	if cfg.Concurrency != 150 {
+		t.Fatalf("expected concurrency=150, got %d", cfg.Concurrency)
+	}
+}
+
+func TestProjectRootOverridesHomeDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	wdFn := func() (string, error) { return tmpDir, nil }
+	homeFn := func() (string, error) { return homeDir, nil }
+
+	homeYAML := "rate-limit: 400\nconcurrency: 150\n"
+	if err := os.WriteFile(filepath.Join(homeDir, "config.yaml"), []byte(homeYAML), 0o644); err != nil {
+		t.Fatalf("failed to write home config.yaml: %v", err)
+	}
+
+	localYAML := "rate-limit: 900\nconcurrency: 500\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(localYAML), 0o644); err != nil {
+		t.Fatalf("failed to write local config.yaml: %v", err)
+	}
+
+	cfg := loadScanConfigWithDirs(wdFn, homeFn)
+	if cfg.RateLimit != 900 {
+		t.Fatalf("expected project root rate-limit=900, got %d", cfg.RateLimit)
+	}
+	if cfg.Concurrency != 500 {
+		t.Fatalf("expected project root concurrency=500, got %d", cfg.Concurrency)
+	}
+}
+
+func TestFindConfigYAMLProjectRootPriority(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	wdFn := func() (string, error) { return tmpDir, nil }
+	homeFn := func() (string, error) { return homeDir, nil }
+
+	localYAML := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(localYAML, []byte("rate-limit: 100\n"), 0o644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	path, err := findConfigYAMLWithDirs(wdFn, homeFn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != localYAML {
+		t.Fatalf("expected project root path %q, got %q", localYAML, path)
+	}
+}
