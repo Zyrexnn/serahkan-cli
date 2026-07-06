@@ -407,6 +407,7 @@ func zeroScanOptions() struct {
 	limit                     int
 	output                    string
 	export                    string
+	crawl                     bool
 } {
 	return struct {
 		target                    string
@@ -448,6 +449,7 @@ func zeroScanOptions() struct {
 		limit                     int
 		output                    string
 		export                    string
+		crawl                     bool
 	}{}
 }
 
