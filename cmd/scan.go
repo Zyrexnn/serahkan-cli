@@ -59,6 +59,7 @@ var scanOptions struct {
 	limit                     int
 	output                    string
 	export                    string
+	crawl                     bool
 }
 
 var severityRank = map[string]int{
@@ -177,6 +178,7 @@ var scanCmd = &cobra.Command{
 			ShowCommand:               scanOptions.showNucleiCommand,
 			LegacyCompatible:          scanOptions.legacyCompatible,
 			LogWriter:                 logOut,
+			EnableCrawl:               scanOptions.crawl,
 		}
 		if scanOptions.brutalAggressive {
 			if scanOptions.concurrency == 0 {
@@ -194,7 +196,7 @@ var scanCmd = &cobra.Command{
 			defer cancelScanTimeout()
 		}
 
-		scanResult, err := runner.RunNucleiDetailed(scanCtx, scanOptions.target, allowedSeverities, runOptions)
+		scanResult, err := runner.RunNucleiScan(scanCtx, scanOptions.target, allowedSeverities, runOptions)
 		stopTicker()
 		if err != nil {
 			return fmt.Errorf("scan failed: %w", err)
@@ -396,6 +398,7 @@ func init() {
 	scanCmd.Flags().IntVar(&scanOptions.limit, "limit", 5, "Maximum number of findings to send to AI for analysis")
 	scanCmd.Flags().StringVar(&scanOptions.output, "output", "text", "Output format: text or json")
 	scanCmd.Flags().StringVar(&scanOptions.export, "export", "", "Export report to file: html or markdown")
+	scanCmd.Flags().BoolVar(&scanOptions.crawl, "crawl", false, "Enable Katana crawler to discover additional sub-pages before scanning")
 
 	_ = scanCmd.MarkFlagRequired("target")
 }

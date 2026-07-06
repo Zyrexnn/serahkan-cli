@@ -1,17 +1,20 @@
 package runner
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Zyrexnn/serahkan-cli/internal/parser"
 )
@@ -40,6 +43,8 @@ type Options struct {
 	ShowCommand               bool
 	LegacyCompatible          bool
 	LogWriter                 io.Writer
+	TargetsFile               string
+	EnableCrawl               bool
 }
 
 type Result struct {
@@ -67,6 +72,57 @@ func RunNuclei(ctx context.Context, target string, allowedSeverities []string, o
 	return result.Findings, nil
 }
 
+func RunNucleiScan(ctx context.Context, target string, allowedSeverities []string, options Options) (Result, error) {
+	if options.LogWriter == nil {
+		options.LogWriter = io.Discard
+	}
+
+	if !options.EnableCrawl {
+		return RunNucleiDetailed(ctx, target, allowedSeverities, options)
+	}
+
+	if wafErr := checkWAFBlock(ctx, target, options.LogWriter); wafErr != nil {
+		return Result{}, wafErr
+	}
+
+	crawlResult, crawlErr := CrawlTarget(ctx, target, options.Concurrency, 2, options.LogWriter, options)
+	fmt.Fprintln(options.LogWriter)
+	if crawlErr != nil {
+		if options.Verbose {
+			fmt.Fprintf(options.LogWriter, "[WARN] crawl phase failed, falling back to single-target scan: %v\n", crawlErr)
+		}
+		return RunNucleiDetailed(ctx, target, allowedSeverities, options)
+	}
+
+	if crawlResult.Count <= 1 {
+		fmt.Fprintf(options.LogWriter, "[WARN] Crawler extracted 0 unique sub-pages (target might be protected).\n")
+		if !promptForceScan(options.LogWriter) {
+			return Result{}, fmt.Errorf("scan aborted by user")
+		}
+		return RunNucleiDetailed(ctx, target, allowedSeverities, options)
+	}
+
+	targetsFile, cleanup, err := WriteTargetsToFile(crawlResult.URLs)
+	if err != nil {
+		if options.Verbose {
+			fmt.Fprintf(options.LogWriter, "\n[WARN] failed to write crawl targets, falling back to single-target scan: %v\n", err)
+		}
+		return RunNucleiDetailed(ctx, target, allowedSeverities, options)
+	}
+	defer cleanup()
+
+	options.TargetsFile = targetsFile
+	return RunNucleiDetailed(ctx, target, allowedSeverities, options)
+}
+
+func promptForceScan(logWriter io.Writer) bool {
+	fmt.Fprintf(logWriter, "[?] Crawler yielded no new paths. Force scan the primary target URL instead? (y/N): ")
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(strings.ToLower(input))
+	return input == "y" || input == "yes"
+}
+
 func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []string, options Options) (Result, error) {
 	nucleiPath, err := ResolveNucleiPath()
 	if err != nil {
@@ -85,7 +141,7 @@ func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []s
 		options.LogWriter = io.Discard
 	}
 
-	nucleiArgs := buildNucleiArgs(nucleiPath, target, allowedSeverities, options)
+	nucleiArgs := buildStealthArgs(nucleiPath, target, allowedSeverities, options)
 	command := append([]string{nucleiPath}, nucleiArgs...)
 
 	cmd := exec.CommandContext(ctx, nucleiPath, nucleiArgs...)
@@ -175,12 +231,17 @@ func isAutomaticScanNoTemplateError(stderr string) bool {
 
 func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, options Options) []string {
 	args := []string{
-		"-target", target,
 		"-jsonl",
 		"-severity", strings.Join(allowedSeverities, ","),
 		"-timeout", fmt.Sprint(options.TimeoutSeconds),
 		"-retries", fmt.Sprint(options.Retries),
 		"-leave-default-ports",
+	}
+
+	if options.TargetsFile != "" {
+		args = append(args, "-list", options.TargetsFile)
+	} else {
+		args = append(args, "-target", target)
 	}
 
 	if !options.ShowCommand {
@@ -336,4 +397,74 @@ func localNucleiCandidates() []string {
 	}
 
 	return []string{"nuclei", "nuclei.exe"}
+}
+
+var wafBlockPatterns = []string{
+	"error 1006",
+	"access denied",
+	"access denied.",
+	"captcha",
+	"just a moment",
+	"checking if the site connection is secure",
+	"please wait while we are checking your browser",
+	"enable javascript and cookies to continue",
+	"attention required",
+	"ray id:",
+	"cloudflare",
+	"incapsula",
+	"imperva",
+	"akamai",
+	"denied by security access",
+	"security block",
+	"request blocked",
+	"forbidden",
+}
+
+func checkWAFBlock(ctx context.Context, target string, logWriter io.Writer) error {
+	if logWriter == nil {
+		logWriter = io.Discard
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil
+	}
+
+	req.Header.Set("User-Agent", randomUserAgent())
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return nil
+	}
+
+	bodyStr := strings.ToLower(string(body))
+
+	for _, pattern := range wafBlockPatterns {
+		if strings.Contains(bodyStr, pattern) {
+			fmt.Fprintf(logWriter, "[BLOCKED] WAF/security filter detected on %s (matched: %s)\n", target, pattern)
+			return fmt.Errorf("target %s appears to be behind a WAF/security filter (matched pattern: %s)", target, pattern)
+		}
+	}
+
+	lowerHeaders := strings.ToLower(strings.Join(resp.Header.Values("Server"), " "))
+	cfRay := resp.Header.Get("Cf-Ray")
+	if cfRay != "" {
+		fmt.Fprintf(logWriter, "[BLOCKED] Cloudflare protection detected on %s (Cf-Ray: %s)\n", target, cfRay)
+		return fmt.Errorf("target %s is behind Cloudflare protection", target)
+	}
+
+	_ = lowerHeaders
+
+	return nil
 }
