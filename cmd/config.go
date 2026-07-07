@@ -13,41 +13,12 @@ var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage persisted CLI configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		out := cmd.OutOrStdout()
-		endpoint, _ := cmd.Flags().GetString("endpoint")
-		model, _ := cmd.Flags().GetString("model")
-
-		if endpoint == "" && model == "" {
-			return cmd.Help()
-		}
-
-		existing := cfgstore.LoadScanConfig()
-
-		if endpoint != "" {
-			existing.AIEndpoint = endpoint
-		}
-		if model != "" {
-			existing.AIModel = model
-		}
-
-		path, err := cfgstore.SaveScanConfig(existing)
-		if err != nil {
-			return err
-		}
-
-		fmt.Fprintf(out, "saved to %s\n", path)
-		if endpoint != "" {
-			fmt.Fprintf(out, "ai-endpoint: %s\n", endpoint)
-		}
-		if model != "" {
-			fmt.Fprintf(out, "ai-model: %s\n", model)
-		}
-		return nil
+		return cmd.Help()
 	},
 }
 
-var configViewCmd = &cobra.Command{
-	Use:   "view",
+var configShowCmd = &cobra.Command{
+	Use:   "show",
 	Short: "Print the active config file contents",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		out := cmd.OutOrStdout()
@@ -152,9 +123,7 @@ var configUnsetCmd = &cobra.Command{
 }
 
 func init() {
-	configCmd.Flags().String("endpoint", "", "AI endpoint URL to persist in config.yaml")
-	configCmd.Flags().String("model", "", "AI model name to persist in config.yaml")
-	configCmd.AddCommand(configViewCmd)
+	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configUnsetCmd)
 	rootCmd.AddCommand(configCmd)
