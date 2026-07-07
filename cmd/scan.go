@@ -25,23 +25,19 @@ var scanOptions struct {
 	profile                   string
 	focus                     string
 	timeout                   int
-	scanTimeout               int
+	maxDuration               int
 	retries                   int
 	concurrency               int
 	rateLimit                 int
 	verbose                   bool
-	noInteractsh              bool
-	includeHTTP               bool
-	includeLowInfo            bool
-	includeOOB                bool
+	interactsh                bool
+	rawHTTP                   bool
 	enableHeadless            bool
 	enableDAST                bool
-	automaticScan             bool
-	includeDefaultIgnoredTags []string
+	techDetect                bool
+	forceTags                 []string
 	brutalAggressive          bool
 	benchmarkWeb              bool
-	parityMode                bool
-	legacyCompatible          bool
 	showNucleiCommand         bool
 	headers                   []string
 	cookie                    string
@@ -50,13 +46,13 @@ var scanOptions struct {
 	excludeTags               []string
 	templates                 []string
 	workflows                 []string
-	types                     []string
+	protocols                 []string
 	skipAI                    bool
 	aiEndpoint                string
 	aiModel                   string
 	aiApiKey                  string
 	aiTimeout                 int
-	limit                     int
+	aiFindings                int
 	output                    string
 	export                    string
 	crawl                     bool
@@ -111,7 +107,6 @@ var scanCmd = &cobra.Command{
 
 		applyScanConfigDefaults(cmd)
 		applyScanProfile(cmd)
-		applyScanConfigAIOverride(cmd)
 
 		scanOptions.target = sanitizeTarget(scanOptions.target)
 
@@ -143,9 +138,6 @@ var scanCmd = &cobra.Command{
 		}
 
 		allowedSeverities := parseSeverityFlag(scanOptions.severity)
-		if scanOptions.includeLowInfo {
-			allowedSeverities = []string{"info", "low", "medium", "high", "critical"}
-		}
 		if cmd.Flags().Changed("ai-endpoint") {
 			allowedSeverities = []string{"info", "low", "medium", "high", "critical"}
 		}
@@ -158,15 +150,14 @@ var scanCmd = &cobra.Command{
 			TimeoutSeconds:            scanOptions.timeout,
 			Retries:                   scanOptions.retries,
 			Verbose:                   scanOptions.verbose,
-			NoInteractsh:              scanOptions.noInteractsh,
+			NoInteractsh:              !scanOptions.interactsh,
 			Concurrency:               scanOptions.concurrency,
 			RateLimit:                 scanOptions.rateLimit,
-			ParityMode:                scanOptions.parityMode,
-			IncludeHTTP:               scanOptions.includeHTTP,
+			RawHTTP:                   scanOptions.rawHTTP,
 			EnableHeadless:            scanOptions.enableHeadless,
 			EnableDAST:                scanOptions.enableDAST,
-			AutomaticScan:             scanOptions.automaticScan,
-			IncludeDefaultIgnoredTags: scanOptions.includeDefaultIgnoredTags,
+			TechDetect:                scanOptions.techDetect,
+			ForceTags:                 scanOptions.forceTags,
 			Headers:                   scanOptions.headers,
 			Cookie:                    scanOptions.cookie,
 			CookieFile:                scanOptions.cookieFile,
@@ -174,9 +165,8 @@ var scanCmd = &cobra.Command{
 			ExcludeTags:               scanOptions.excludeTags,
 			Templates:                 scanOptions.templates,
 			Workflows:                 scanOptions.workflows,
-			Types:                     scanOptions.types,
+			Protocols:                 scanOptions.protocols,
 			ShowCommand:               scanOptions.showNucleiCommand,
-			LegacyCompatible:          scanOptions.legacyCompatible,
 			LogWriter:                 logOut,
 			EnableCrawl:               scanOptions.crawl,
 		}
@@ -191,8 +181,8 @@ var scanCmd = &cobra.Command{
 
 		scanCtx := cmd.Context()
 		var cancelScanTimeout func()
-		if scanOptions.scanTimeout > 0 {
-			scanCtx, cancelScanTimeout = context.WithTimeout(scanCtx, time.Duration(scanOptions.scanTimeout)*time.Second)
+		if scanOptions.maxDuration > 0 {
+			scanCtx, cancelScanTimeout = context.WithTimeout(scanCtx, time.Duration(scanOptions.maxDuration)*time.Second)
 			defer cancelScanTimeout()
 		}
 
@@ -213,13 +203,13 @@ var scanCmd = &cobra.Command{
 			return emitNoFindings(out, scanOptions.target, allowedSeverities, scanOptions.output, time.Since(startedAt), scanResult, diagnostics)
 		}
 
-		summary, err := formatFindingsSummary(findings, scanOptions.limit)
+		summary, err := formatFindingsSummary(findings, scanOptions.aiFindings)
 		if err != nil {
 			return fmt.Errorf("failed to format findings summary: %w", err)
 		}
 
-		if len(findings) > scanOptions.limit {
-			findings = findings[:scanOptions.limit]
+		if len(findings) > scanOptions.aiFindings {
+			findings = findings[:scanOptions.aiFindings]
 		}
 
 		analysis := ""
@@ -227,20 +217,6 @@ var scanCmd = &cobra.Command{
 		aiStatus := "not_used"
 		aiError := ""
 		streamed := false
-
-		scanCfg := cfgstore.LoadScanConfig()
-		if scanCfg.AIEndpoint != "" && scanCfg.AIModel != "" && !cmd.Flags().Changed("skip-ai") {
-			scanOptions.skipAI = false
-			if !cmd.Flags().Changed("ai-endpoint") {
-				scanOptions.aiEndpoint = scanCfg.AIEndpoint
-			}
-			if !cmd.Flags().Changed("ai-model") {
-				scanOptions.aiModel = scanCfg.AIModel
-			}
-			if !cmd.Flags().Changed("ai-timeout") && scanCfg.TimeoutSeconds > 0 {
-				scanOptions.aiTimeout = scanCfg.TimeoutSeconds
-			}
-		}
 
 		if scanOptions.skipAI {
 			fmt.Fprintf(logOut, "%s skipped by configuration\n", style.TagAI)
@@ -366,21 +342,17 @@ func init() {
 	scanCmd.Flags().StringVar(&scanOptions.focus, "focus", "", "Template focus preset: exposures, web-vulns, fuzz, misconfig, or cves")
 	scanCmd.Flags().StringVar(&scanOptions.severity, "severity", "medium,high,critical", "Severity levels to include")
 	scanCmd.Flags().IntVar(&scanOptions.timeout, "timeout", 10, "Timeout in seconds per Nuclei HTTP request")
-	scanCmd.Flags().IntVar(&scanOptions.scanTimeout, "scan-timeout", 120, "Maximum duration in seconds for the Nuclei scan phase (0 disables the limit)")
+	scanCmd.Flags().IntVar(&scanOptions.maxDuration, "max-duration", 120, "Maximum duration in seconds for the Nuclei scan phase (0 disables the limit)")
 	scanCmd.Flags().IntVar(&scanOptions.retries, "retries", 0, "Number of retries for Nuclei scan")
 	scanCmd.Flags().IntVar(&scanOptions.concurrency, "concurrency", 0, "Nuclei connection concurrency (overrides profile defaults when explicitly set)")
 	scanCmd.Flags().IntVar(&scanOptions.rateLimit, "rate-limit", 0, "Nuclei requests per second rate limit (overrides profile defaults when explicitly set)")
 	scanCmd.Flags().BoolVarP(&scanOptions.verbose, "verbose", "v", false, "Show verbose debug logging on stderr")
-	scanCmd.Flags().BoolVar(&scanOptions.noInteractsh, "no-interactsh", true, "Disable out-of-band interaction templates (-ni). Reduces coverage but avoids interactsh dependency")
-	scanCmd.Flags().BoolVar(&scanOptions.includeHTTP, "include-http", false, "Include raw HTTP request/response data from Nuclei (-irr). Improves detail but increases scan time and payload size")
-	scanCmd.Flags().BoolVar(&scanOptions.includeLowInfo, "include-low-info", false, "Include info and low severity findings in addition to medium/high/critical")
-	scanCmd.Flags().BoolVar(&scanOptions.includeOOB, "include-oob", false, "Enable interactsh/OOB templates by clearing --no-interactsh")
+	scanCmd.Flags().BoolVar(&scanOptions.interactsh, "interactsh", false, "Enable out-of-band interaction templates")
+	scanCmd.Flags().BoolVar(&scanOptions.rawHTTP, "raw-http", false, "Include raw HTTP request/response data from Nuclei (-irr)")
 	scanCmd.Flags().BoolVar(&scanOptions.enableHeadless, "enable-headless", false, "Enable Nuclei headless browser templates")
 	scanCmd.Flags().BoolVar(&scanOptions.enableDAST, "enable-dast", false, "Enable Nuclei DAST/fuzz templates")
-	scanCmd.Flags().BoolVar(&scanOptions.automaticScan, "automatic-scan", false, "Enable Nuclei automatic technology-based web scan (-as)")
-	scanCmd.Flags().StringSliceVar(&scanOptions.includeDefaultIgnoredTags, "include-default-ignored-tags", nil, "Run tags normally ignored by Nuclei, such as fuzz or bruteforce")
-	scanCmd.Flags().BoolVar(&scanOptions.legacyCompatible, "legacy-compatible", false, "Use settings close to the original wrapper behavior")
-	scanCmd.Flags().BoolVar(&scanOptions.parityMode, "parity-mode", false, "Use minimal wrapper flags to compare behavior with raw Nuclei")
+	scanCmd.Flags().BoolVar(&scanOptions.techDetect, "tech-detect", false, "Enable Nuclei automatic technology detection (-as)")
+	scanCmd.Flags().StringSliceVar(&scanOptions.forceTags, "force-tags", nil, "Run tags normally ignored by Nuclei, such as fuzz or bruteforce")
 	scanCmd.Flags().BoolVar(&scanOptions.showNucleiCommand, "show-nuclei-command", false, "Print the final Nuclei command used by the wrapper")
 	scanCmd.Flags().StringArrayVar(&scanOptions.headers, "header", nil, "Custom header to include in Nuclei requests, repeatable (Header: value)")
 	scanCmd.Flags().StringVar(&scanOptions.cookie, "cookie", "", "Cookie header value to include in Nuclei requests")
@@ -389,16 +361,37 @@ func init() {
 	scanCmd.Flags().StringSliceVar(&scanOptions.excludeTags, "exclude-tags", nil, "Nuclei template tags to exclude")
 	scanCmd.Flags().StringSliceVar(&scanOptions.templates, "templates", nil, "Nuclei template files/directories to run")
 	scanCmd.Flags().StringSliceVar(&scanOptions.workflows, "workflows", nil, "Nuclei workflow files/directories to run")
-	scanCmd.Flags().StringSliceVar(&scanOptions.types, "type", nil, "Nuclei template protocol types to run, such as http,headless,javascript")
+	scanCmd.Flags().StringSliceVar(&scanOptions.protocols, "protocols", nil, "Nuclei template protocols to run, such as http,headless,javascript")
 	scanCmd.Flags().BoolVar(&scanOptions.skipAI, "skip-ai", false, "Skip AI analysis and return a deterministic fallback report from parsed findings")
 	scanCmd.Flags().StringVar(&scanOptions.aiEndpoint, "ai-endpoint", "", "Local AI completion endpoint (overrides environment and config)")
 	scanCmd.Flags().StringVar(&scanOptions.aiModel, "ai-model", "", "Local AI model name (overrides environment and config)")
 	scanCmd.Flags().StringVar(&scanOptions.aiApiKey, "ai-api-key", "", "API key for AI endpoint (overrides environment and config). Required for cloud endpoints.")
 	scanCmd.Flags().IntVar(&scanOptions.aiTimeout, "ai-timeout", 25, "Timeout in seconds for AI completions")
-	scanCmd.Flags().IntVar(&scanOptions.limit, "limit", 5, "Maximum number of findings to send to AI for analysis")
+	scanCmd.Flags().IntVar(&scanOptions.aiFindings, "ai-findings", 5, "Maximum number of findings to send to AI for analysis")
 	scanCmd.Flags().StringVar(&scanOptions.output, "output", "text", "Output format: text or json")
 	scanCmd.Flags().StringVar(&scanOptions.export, "export", "", "Export report to file: html or markdown")
 	scanCmd.Flags().BoolVar(&scanOptions.crawl, "crawl", false, "Enable Katana crawler to discover additional sub-pages before scanning")
+
+	advancedFlags := []string{
+		"concurrency",
+		"rate-limit",
+		"raw-http",
+		"enable-headless",
+		"enable-dast",
+		"tech-detect",
+		"force-tags",
+		"header",
+		"cookie",
+		"cookie-file",
+		"tags",
+		"exclude-tags",
+		"templates",
+		"workflows",
+		"protocols",
+	}
+	for _, flag := range advancedFlags {
+		_ = scanCmd.Flags().MarkHidden(flag)
+	}
 
 	_ = scanCmd.MarkFlagRequired("target")
 }
@@ -510,21 +503,6 @@ func applyScanConfigDefaults(cmd *cobra.Command) {
 	}
 }
 
-func applyScanConfigAIOverride(cmd *cobra.Command) {
-	scanCfg := cfgstore.LoadScanConfig()
-
-	if !cmd.Flags().Changed("ai-endpoint") && scanCfg.AIEndpoint != "" {
-		scanOptions.aiEndpoint = scanCfg.AIEndpoint
-	}
-	if !cmd.Flags().Changed("ai-model") && scanCfg.AIModel != "" {
-		scanOptions.aiModel = scanCfg.AIModel
-	}
-
-	if scanCfg.AIEndpoint != "" && scanCfg.AIModel != "" && !cmd.Flags().Changed("skip-ai") {
-		scanOptions.skipAI = false
-	}
-}
-
 func applyScanProfile(cmd *cobra.Command) {
 	profile := strings.ToLower(strings.TrimSpace(scanOptions.profile))
 	if profile == "" {
@@ -552,10 +530,6 @@ func applyScanProfile(cmd *cobra.Command) {
 		}
 	}
 
-	if scanOptions.legacyCompatible {
-		profile = "deep"
-		setBoolIfUnset("include-http", true, &scanOptions.includeHTTP)
-	}
 	scanOptions.brutalAggressive = false
 	scanOptions.benchmarkWeb = false
 
@@ -563,80 +537,70 @@ func applyScanProfile(cmd *cobra.Command) {
 	case "fast":
 		setStringIfUnset("severity", "high,critical", &scanOptions.severity)
 		setIntIfUnset("timeout", 8, &scanOptions.timeout)
-		setIntIfUnset("scan-timeout", 60, &scanOptions.scanTimeout)
+		setIntIfUnset("max-duration", 60, &scanOptions.maxDuration)
 		setIntIfUnset("retries", 0, &scanOptions.retries)
-		setBoolIfUnset("no-interactsh", true, &scanOptions.noInteractsh)
 		setBoolIfUnset("skip-ai", true, &scanOptions.skipAI)
-		setSliceIfUnset("type", []string{"http"}, &scanOptions.types)
+		setSliceIfUnset("protocols", []string{"http"}, &scanOptions.protocols)
 		setIntIfUnset("ai-timeout", 15, &scanOptions.aiTimeout)
-		setIntIfUnset("limit", 3, &scanOptions.limit)
+		setIntIfUnset("ai-findings", 3, &scanOptions.aiFindings)
 	case "deep":
 		setStringIfUnset("severity", "medium,high,critical", &scanOptions.severity)
 		setIntIfUnset("timeout", 30, &scanOptions.timeout)
-		setIntIfUnset("scan-timeout", 300, &scanOptions.scanTimeout)
+		setIntIfUnset("max-duration", 300, &scanOptions.maxDuration)
 		setIntIfUnset("retries", 2, &scanOptions.retries)
-		setBoolIfUnset("no-interactsh", false, &scanOptions.noInteractsh)
+		setBoolIfUnset("interactsh", true, &scanOptions.interactsh)
 		setBoolIfUnset("skip-ai", false, &scanOptions.skipAI)
 		setIntIfUnset("ai-timeout", 120, &scanOptions.aiTimeout)
-		setIntIfUnset("limit", 10, &scanOptions.limit)
+		setIntIfUnset("ai-findings", 10, &scanOptions.aiFindings)
 	case "web-full":
 		setStringIfUnset("severity", "info,low,medium,high,critical", &scanOptions.severity)
 		setIntIfUnset("timeout", 30, &scanOptions.timeout)
-		setIntIfUnset("scan-timeout", 420, &scanOptions.scanTimeout)
+		setIntIfUnset("max-duration", 420, &scanOptions.maxDuration)
 		setIntIfUnset("retries", 1, &scanOptions.retries)
-		setBoolIfUnset("no-interactsh", false, &scanOptions.noInteractsh)
+		setBoolIfUnset("interactsh", true, &scanOptions.interactsh)
 		setBoolIfUnset("skip-ai", false, &scanOptions.skipAI)
-		setBoolIfUnset("include-http", true, &scanOptions.includeHTTP)
+		setBoolIfUnset("raw-http", true, &scanOptions.rawHTTP)
 		setBoolIfUnset("enable-headless", true, &scanOptions.enableHeadless)
 		setBoolIfUnset("enable-dast", true, &scanOptions.enableDAST)
-		setSliceIfUnset("include-default-ignored-tags", []string{"fuzz"}, &scanOptions.includeDefaultIgnoredTags)
-		setSliceIfUnset("type", []string{"http", "headless", "javascript"}, &scanOptions.types)
+		setSliceIfUnset("force-tags", []string{"fuzz"}, &scanOptions.forceTags)
+		setSliceIfUnset("protocols", []string{"http", "headless", "javascript"}, &scanOptions.protocols)
 		setIntIfUnset("ai-timeout", 120, &scanOptions.aiTimeout)
-		setIntIfUnset("limit", 15, &scanOptions.limit)
+		setIntIfUnset("ai-findings", 15, &scanOptions.aiFindings)
 	case "benchmark-web":
 		scanOptions.benchmarkWeb = true
 		setStringIfUnset("severity", "info,low,medium,high,critical", &scanOptions.severity)
 		setStringIfUnset("focus", "web-vulns", &scanOptions.focus)
 		setIntIfUnset("timeout", 25, &scanOptions.timeout)
-		setIntIfUnset("scan-timeout", 300, &scanOptions.scanTimeout)
+		setIntIfUnset("max-duration", 300, &scanOptions.maxDuration)
 		setIntIfUnset("retries", 3, &scanOptions.retries)
-		setBoolIfUnset("no-interactsh", true, &scanOptions.noInteractsh)
 		setBoolIfUnset("skip-ai", true, &scanOptions.skipAI)
-		setBoolIfUnset("include-http", true, &scanOptions.includeHTTP)
+		setBoolIfUnset("raw-http", true, &scanOptions.rawHTTP)
 		setBoolIfUnset("enable-dast", false, &scanOptions.enableDAST)
-		setSliceIfUnset("type", []string{"http"}, &scanOptions.types)
-		setIntIfUnset("limit", 20, &scanOptions.limit)
+		setSliceIfUnset("protocols", []string{"http"}, &scanOptions.protocols)
+		setIntIfUnset("ai-findings", 20, &scanOptions.aiFindings)
 	case "brutal-aggressive":
 		scanOptions.brutalAggressive = true
 		setStringIfUnset("severity", "info,low,medium,high,critical", &scanOptions.severity)
 		setIntIfUnset("timeout", 45, &scanOptions.timeout)
-		setIntIfUnset("scan-timeout", 600, &scanOptions.scanTimeout)
+		setIntIfUnset("max-duration", 600, &scanOptions.maxDuration)
 		setIntIfUnset("retries", 3, &scanOptions.retries)
-		setBoolIfUnset("no-interactsh", false, &scanOptions.noInteractsh)
+		setBoolIfUnset("interactsh", true, &scanOptions.interactsh)
 		setBoolIfUnset("skip-ai", true, &scanOptions.skipAI)
-		setBoolIfUnset("include-http", true, &scanOptions.includeHTTP)
+		setBoolIfUnset("raw-http", true, &scanOptions.rawHTTP)
 		setBoolIfUnset("enable-headless", true, &scanOptions.enableHeadless)
 		setBoolIfUnset("enable-dast", true, &scanOptions.enableDAST)
-		setSliceIfUnset("include-default-ignored-tags", []string{"cve", "sqli", "xss", "lfi", "rce", "misconfig", "exposure"}, &scanOptions.includeDefaultIgnoredTags)
-		setSliceIfUnset("type", []string{"http", "headless", "javascript", "dns"}, &scanOptions.types)
-		setIntIfUnset("limit", 25, &scanOptions.limit)
+		setSliceIfUnset("force-tags", []string{"cve", "sqli", "xss", "lfi", "rce", "misconfig", "exposure"}, &scanOptions.forceTags)
+		setSliceIfUnset("protocols", []string{"http", "headless", "javascript", "dns"}, &scanOptions.protocols)
+		setIntIfUnset("ai-findings", 25, &scanOptions.aiFindings)
 	default:
 		setStringIfUnset("severity", "medium,high,critical", &scanOptions.severity)
 		setIntIfUnset("timeout", 10, &scanOptions.timeout)
-		setIntIfUnset("scan-timeout", 120, &scanOptions.scanTimeout)
+		setIntIfUnset("max-duration", 120, &scanOptions.maxDuration)
 		setIntIfUnset("retries", 0, &scanOptions.retries)
-		setBoolIfUnset("no-interactsh", true, &scanOptions.noInteractsh)
 		setBoolIfUnset("skip-ai", false, &scanOptions.skipAI)
-		setSliceIfUnset("type", []string{"http"}, &scanOptions.types)
+		setSliceIfUnset("protocols", []string{"http"}, &scanOptions.protocols)
 		setIntIfUnset("ai-timeout", 25, &scanOptions.aiTimeout)
-		setIntIfUnset("limit", 5, &scanOptions.limit)
-	}
-
-	if scanOptions.includeOOB {
-		scanOptions.noInteractsh = false
-	}
-	if scanOptions.includeLowInfo {
-		scanOptions.severity = "info,low,medium,high,critical"
+		setIntIfUnset("ai-findings", 5, &scanOptions.aiFindings)
 	}
 	applyFocusPreset(cmd)
 }
@@ -651,7 +615,7 @@ func applyFocusPreset(cmd *cobra.Command) {
 		if !cmd.Flags().Changed("enable-dast") {
 			scanOptions.enableDAST = true
 		}
-		appendSliceIfUnset(cmd, "include-default-ignored-tags", []string{"fuzz"}, &scanOptions.includeDefaultIgnoredTags)
+		appendSliceIfUnset(cmd, "force-tags", []string{"fuzz"}, &scanOptions.forceTags)
 		appendSliceIfUnset(cmd, "tags", []string{"fuzz"}, &scanOptions.tags)
 	case "misconfig":
 		appendSliceIfUnset(cmd, "tags", []string{"misconfig", "exposure", "config"}, &scanOptions.tags)
@@ -721,10 +685,10 @@ func emitJSONReport(out io.Writer, target string, severities []string, findings 
 func buildScanDiagnostics(severities []string, wafBlocked int) []string {
 	reasons := []string{}
 	if !containsSeverity(severities, "info") || !containsSeverity(severities, "low") {
-		reasons = append(reasons, "low/info severity findings may be hidden; use --include-low-info for full visibility")
+		reasons = append(reasons, "low/info severity findings may be hidden; use --severity info,low,medium,high,critical for full visibility")
 	}
-	if scanOptions.noInteractsh {
-		reasons = append(reasons, "OOB/interactsh templates are disabled; use --include-oob or --profile web-full")
+	if !scanOptions.interactsh {
+		reasons = append(reasons, "OOB/interactsh templates are disabled; use --interactsh or --profile web-full")
 	}
 	if !scanOptions.enableHeadless {
 		reasons = append(reasons, "headless browser templates are disabled; use --enable-headless for JavaScript-heavy targets")
@@ -735,7 +699,7 @@ func buildScanDiagnostics(severities []string, wafBlocked int) []string {
 	if len(scanOptions.headers) == 0 && scanOptions.cookie == "" && scanOptions.cookieFile == "" {
 		reasons = append(reasons, "scan is unauthenticated; use --header, --cookie, or --cookie-file for login-only apps")
 	}
-	if len(scanOptions.includeDefaultIgnoredTags) == 0 {
+	if len(scanOptions.forceTags) == 0 {
 		reasons = append(reasons, "Nuclei default ignored tags such as fuzz/bruteforce remain excluded")
 	}
 	if scanOptions.brutalAggressive {
@@ -744,14 +708,11 @@ func buildScanDiagnostics(severities []string, wafBlocked int) []string {
 	if scanOptions.benchmarkWeb {
 		reasons = append(reasons, "benchmark-web mode is active for public vulnerable demo targets and web vulnerability templates")
 	}
-	if scanOptions.parityMode {
-		reasons = append(reasons, "parity mode is active with minimal wrapper defaults for raw Nuclei comparison")
-	}
 	if focus := strings.TrimSpace(scanOptions.focus); focus != "" {
 		reasons = append(reasons, fmt.Sprintf("focus preset %q is active", focus))
 	}
-	if scanOptions.scanTimeout > 0 {
-		reasons = append(reasons, fmt.Sprintf("Nuclei scan phase is capped at %ds", scanOptions.scanTimeout))
+	if scanOptions.maxDuration > 0 {
+		reasons = append(reasons, fmt.Sprintf("Nuclei scan phase is capped at %ds", scanOptions.maxDuration))
 	}
 	if wafBlocked > 0 {
 		reasons = append(reasons, fmt.Sprintf("%d finding(s) blocked by WAF/security filter and excluded from results", wafBlocked))
@@ -786,18 +747,17 @@ func authMode() string {
 
 func nucleiExecution(scanResult runner.Result) map[string]interface{} {
 	execution := map[string]interface{}{
-		"parity_mode":                  scanOptions.parityMode,
-		"automatic_scan":               scanOptions.automaticScan,
-		"include_http":                 scanOptions.includeHTTP,
+		"tech_detect":                  scanOptions.techDetect,
+		"raw_http":                     scanOptions.rawHTTP,
 		"headless":                     scanOptions.enableHeadless,
 		"dast":                         scanOptions.enableDAST,
-		"oob":                          !scanOptions.noInteractsh,
-		"types":                        scanOptions.types,
+		"oob":                          scanOptions.interactsh,
+		"protocols":                    scanOptions.protocols,
 		"tags":                         scanOptions.tags,
 		"exclude_tags":                 scanOptions.excludeTags,
 		"templates":                    scanOptions.templates,
 		"workflows":                    scanOptions.workflows,
-		"include_default_ignored_tags": scanOptions.includeDefaultIgnoredTags,
+		"force_tags":                   scanOptions.forceTags,
 		"concurrency":                  scanOptions.concurrency,
 		"rate_limit":                   scanOptions.rateLimit,
 		"total_lines":                  scanResult.TotalLines,
@@ -881,6 +841,9 @@ func parseSeverityFlag(value string) []string {
 }
 
 func formatFindingsSummary(findings []parser.NucleiFinding, maxFindings int) (string, error) {
+	if maxFindings <= 0 {
+		maxFindings = 5
+	}
 	var builder strings.Builder
 	builder.WriteString("Filtered Nuclei findings requiring defensive analysis:\n")
 
