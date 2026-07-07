@@ -4,8 +4,8 @@ An AI-powered Nuclei orchestration engine built with Go. `serahkan-cli` is a lig
 
 ## Key Features
 
-- **Native Configuration Wizard:** Setup your local AI endpoint and model once via `serahkan config` without touching configuration files manually.
-- **Smart Configuration Fallback:** Uses an elegant hierarchical priority system (`CLI Flags` > `config.yaml` > `Profile Defaults`).
+- **Native Configuration Wizard:** Setup your local AI endpoint and model once via `serahkan config set ai.endpoint ai.model` without touching configuration files manually.
+- **Smart Configuration Fallback:** Uses an elegant hierarchical priority system (`CLI Flags` > `config.json` > `Profile Defaults`).
 - **WAF-Aware Concurrency Control:** Embedded rate-limiting and sanitization mechanisms to optimize scanning speeds against strict target firewalls.
 - **Symmetric UI Terminal:** Beautiful ASCII art banner with aligned meta-summaries using rigid column layouts.
 - **Pure JSON Purity:** Dedicated `--output json` pipeline that emits strictly valid indented structural data, sanitized from terminal ANSI color codes.
@@ -31,15 +31,17 @@ Move `serahkan.exe` into a dedicated folder and append it to your Windows System
 
 ### 1. One-Time Setup (Configure AI Environment)
 
-Initialize your local LLM orchestrator parameters. This generates or updates the local `config.yaml`:
+Initialize your local LLM orchestrator parameters. This generates or updates the local `config.json`:
 
 ```cmd
-serahkan config --endpoint http://127.0.0.1:1234/v1/chat/completions --model qwen2.5-coder-1.5b-instruct
+serahkan config set ai.endpoint http://127.0.0.1:1234/v1/chat/completions
+serahkan config set ai.model qwen2.5-coder-1.5b-instruct
+serahkan config show
 ```
 
 ### 2. Execute Scanning (AI Auto-Enabled)
 
-Run your targeted vulnerability scan. The tool automatically detects your `config.yaml` parameters and pipes results to your local AI:
+Run your targeted vulnerability scan. The tool automatically detects your `config.json` parameters and pipes results to your local AI:
 
 ```cmd
 serahkan scan --target https://example.com/login --profile benchmark-web
@@ -61,17 +63,18 @@ Bypass AI report generation on the fly to fetch instant target metrics:
 serahkan scan --target https://example.com/login --profile benchmark-web --skip-ai
 ```
 
+> All severities in one go: pass `--severity info,low,medium,high,critical` instead of a legacy "include low/info" shortcut.
+
 ## Commands
 
 ### `config`
 
-Manage persisted CLI configuration. Use `--endpoint` and `--model` flags to write values directly to `config.yaml`.
+Manage persisted CLI configuration. Use `set`, `show`, and `unset` subcommands — that's the only way to mutate config now.
 
 ```cmd
-serahkan config --endpoint http://127.0.0.1:1234/v1/chat/completions --model qwen2.5-coder-1.5b-instruct
-serahkan config view
 serahkan config set ai.endpoint http://127.0.0.1:1234/v1/chat/completions
 serahkan config set ai.model qwen2.5-coder-1.5b-instruct
+serahkan config show
 serahkan config unset ai.api_key
 ```
 
@@ -91,7 +94,7 @@ When the crawler discovers more than one unique URL, discovered paths are writte
 serahkan scan --target http://example.com
 serahkan scan --target http://example.com --profile deep --output json
 serahkan scan --target http://example.com --profile brutal-aggressive --skip-ai
-serahkan scan --target http://example.com --crawl
+serahkan scan --target http://example.com --interactsh
 serahkan scan --target http://example.com --crawl --profile web-full
 ```
 
@@ -113,9 +116,9 @@ serahkan version
 
 ## Scan Profiles
 
-Profiles control the full set of Nuclei arguments: timeouts, retries, severity filtering, concurrency, rate limits, protocol types, and template inclusion strategy. The active profile is selected via `--profile` and defaults to `balanced`.
+Profiles control the full set of Nuclei arguments: timeouts, retries, severity filtering, concurrency, rate limits, protocol selection, and template inclusion strategy. The active profile is selected via `--profile` and defaults to `balanced`.
 
-| Profile | Severity | Timeout | Scan Cap | Retries | OOB | Headless | DAST | Default Ignored Tags | Types | AI |
+| Profile | Severity | Timeout | Max Duration | Retries | OOB | Headless | DAST | Forced Tags | Protocols | AI |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `fast` | high, critical | 8s | 60s | 0 | disabled | off | off | -- | http | skipped |
 | `balanced` | medium, high, critical | 10s | 120s | 0 | disabled | off | off | -- | http | enabled |
@@ -149,12 +152,12 @@ Extended depth analysis. Increases timeouts, enables out-of-band interaction tem
 
 ```cmd
 serahkan scan --target http://example.com --profile deep
-serahkan scan --target http://example.com --profile deep --include-http --include-oob
+serahkan scan --target http://example.com --profile deep --raw-http --interactsh
 ```
 
 #### `web-full`
 
-Comprehensive web-vulnerability hunting. Enables headless browser templates, DAST/fuzz scanning, out-of-band interaction, and includes the `fuzz` default-ignored tag. Captures raw HTTP request/response data.
+Comprehensive web-vulnerability hunting. Enables headless browser templates, DAST/fuzz scanning, out-of-band interaction, and includes the `fuzz` forced tag. Captures raw HTTP request/response data.
 
 ```cmd
 serahkan scan --target http://example.com --profile web-full
@@ -172,7 +175,7 @@ serahkan scan --target http://testphp.vulnweb.com/ --profile benchmark-web --out
 
 #### `brutal-aggressive`
 
-Maximum throughput coverage. Sets full severity inclusion, 600-second scan cap, elevated concurrency (300) and rate limit (800), headless and DAST enabled, out-of-band interaction active, and 3 retries. The default-ignored tag set is broadened to `cve`, `sqli`, `xss`, `lfi`, `rce`, `misconfig`, and `exposure` to maximize template loading across core web-application vulnerability classes.
+Maximum throughput coverage. Sets full severity inclusion, 600-second scan cap, elevated concurrency (300) and rate limit (800), headless and DAST enabled, out-of-band interaction active, and 3 retries. The forced tag set is broadened to `cve`, `sqli`, `xss`, `lfi`, `rce`, `misconfig`, and `exposure` to maximize template loading across core web-application vulnerability classes.
 
 ```cmd
 serahkan scan --target http://example.com --profile brutal-aggressive --skip-ai
@@ -199,6 +202,8 @@ serahkan scan --target http://example.com --focus misconfig --profile deep
 
 ## Advanced Observability Flags
 
+These flags are hidden from `serahkan scan --help` by default — they exist for advanced users and operator-level triage. Add them on top of any profile.
+
 ### `--show-nuclei-command`
 
 Prints the exact Nuclei argument array constructed by the wrapper. When this flag is active, the internal `-silent` flag is dynamically removed from the execution arguments, exposing Nuclei's template-loading logs, match notifications, and stderr diagnostics in real time.
@@ -209,15 +214,6 @@ serahkan scan --target http://example.com --profile benchmark-web --show-nuclei-
 ```
 
 Use this to verify which flags the wrapper injects, diagnose template-starvation issues, or confirm that specific tags and templates are being loaded by Nuclei.
-
-### `--parity-mode`
-
-Strips the wrapper down to minimal argument construction: no concurrency/rate-limit overrides, no `-no-banner`, no `-omit-raw`, and no `-irr`. Designed for direct comparison between wrapper-managed execution and raw Nuclei behavior when diagnosing unexpected output.
-
-```cmd
-serahkan scan --target http://example.com --parity-mode --show-nuclei-command
-serahkan scan --target http://example.com --parity-mode --output json
-```
 
 ### `--concurrency` and `--rate-limit`
 
@@ -324,53 +320,48 @@ serahkan scan --target http://example.com --profile benchmark-web --output json 
 
 ## Full Reference
 
-### Global Flags
+### Public Flags (shown in `--help`)
 
 | Flag | Default | Description |
 |---|---|---|
 | `--target`, `-t` | *(required)* | Target URL to scan. Must start with `http://` or `https://`. |
-| `--profile` | `balanced` | Scan preset. |
-| `--focus` | *(none)* | Template focus preset. |
-| `--severity` | `medium,high,critical` | Comma-separated severity levels. |
-| `--include-low-info` | `false` | Include info and low severities. |
+| `--profile` | `balanced` | Scan preset: `fast`, `balanced`, `deep`, `web-full`, `benchmark-web`, or `brutal-aggressive`. |
+| `--focus` | *(none)* | Template focus preset: `exposures`, `web-vulns`, `fuzz`, `misconfig`, or `cves`. |
+| `--severity` | `medium,high,critical` | Comma-separated severity levels. Pass `info,low,medium,high,critical` to enable everything. |
+| `--max-duration` | `120` | Maximum Nuclei phase duration in seconds. `0` disables the limit. |
 | `--timeout` | `10` | Nuclei per-request timeout in seconds. |
-| `--scan-timeout` | `120` | Maximum Nuclei phase duration in seconds. `0` disables the limit. |
 | `--retries` | `0` | Nuclei connection retries. |
-| `--concurrency` | `0` | Nuclei connection concurrency. Overrides profile defaults when explicitly set. `0` uses profile value. |
-| `--rate-limit` | `0` | Nuclei requests per second rate limit. Overrides profile defaults when explicitly set. `0` uses profile value. |
-| `--no-interactsh` | `true` | Disable out-of-band interaction templates. |
-| `--include-oob` | `false` | Enable out-of-band templates by clearing `--no-interactsh`. |
-| `--include-http` | `false` | Include raw HTTP request/response data (`-irr`). |
-| `--enable-headless` | `false` | Enable headless browser templates. |
-| `--enable-dast` | `false` | Enable DAST/fuzz templates. |
-| `--automatic-scan` | `false` | Enable Nuclei automatic technology-based scan (`-as`). Falls back to normal scan if no tech-tagged templates match. |
-| `--include-default-ignored-tags` | *(none)* | Include tags normally ignored by Nuclei, such as `fuzz`. |
-| `--tags` | *(none)* | Nuclei template tags to include. |
-| `--exclude-tags` | *(none)* | Nuclei template tags to exclude. |
-| `--templates` | *(none)* | Specific Nuclei template files or directories. |
-| `--workflows` | *(none)* | Specific Nuclei workflow files or directories. |
-| `--type` | *(none)* | Nuclei protocol types: `http`, `headless`, `javascript`. |
-| `--header` | *(none)* | Custom request header. Repeatable. |
-| `--cookie` | *(none)* | Cookie value sent as a `Cookie` header. |
-| `--cookie-file` | *(none)* | File containing headers/cookies for authenticated scans. |
+| `--interactsh` | `false` | Enable out-of-band interaction templates (`-ni` removed). |
 | `--skip-ai` | `false` | Skip AI analysis. |
 | `--ai-endpoint` | *(config)* | Override AI endpoint. |
 | `--ai-model` | *(config)* | Override AI model. |
 | `--ai-api-key` | *(config)* | Override AI API key. |
 | `--ai-timeout` | `25` | AI completion timeout in seconds. |
-| `--limit` | `5` | Maximum findings sent to AI for analysis. |
+| `--ai-findings` | `5` | Maximum findings sent to AI for analysis. |
 | `--output` | `text` | Output format: `text` or `json`. |
+| `--export` | *(none)* | Export report to file: `html` or `markdown`. |
+| `--crawl` | `false` | Enable pre-scan discovery via Katana. |
 | `--show-nuclei-command` | `false` | Print the constructed Nuclei command and remove `-silent` for engine visibility. |
-| `--parity-mode` | `false` | Minimal wrapper flags for raw Nuclei comparison. |
-| `--legacy-compatible` | `false` | Use settings close to the original wrapper behavior. |
-| `--crawl` | `false` | Enable optional programmatic multi-phase web crawling via Katana before the core scan phase. |
 | `--verbose`, `-v` | `false` | Enable verbose debug logging on stderr. |
+
+### Advanced Flags (hidden from `--help`)
+
+These are mostly passthroughs to Nuclei and override profile defaults. Use `--help --all` to enumerate them programmatically. The hidden set covers:
+
+- `--concurrency`, `--rate-limit` — throughput tuning
+- `--raw-http` — include raw HTTP request/response data (`-irr`)
+- `--enable-headless`, `--enable-dast`, `--tech-detect` — engine feature toggles
+- `--force-tags` — eg. `cve,sqli,xss` instead of `include-default-ignored-tags`
+- `--header`, `--cookie`, `--cookie-file` — authenticated scanning
+- `--tags`, `--exclude-tags`, `--templates`, `--workflows`, `--protocols` — Nuclei template selectors
 
 ### Configuration Precedence
 
 ```
-CLI Flags > config.yaml > Profile Defaults > Code Defaults
+CLI Flags > config.json > Profile Defaults > Code Defaults
 ```
+
+Supported config keys: `ai.endpoint`, `ai.model`, `ai.api_key`, `ai.timeout_seconds`, `ai.retry_count`, `rate-limit`, `concurrency`.
 
 Supported environment variables: `SERAHKAN_AI_ENDPOINT`, `SERAHKAN_AI_MODEL`, `SERAHKAN_AI_API_KEY`, `SERAHKAN_CONFIG`.
 
@@ -384,7 +375,7 @@ serahkan scan --target http://example.com --profile fast
 serahkan scan --target http://example.com
 
 :: Deep scan with full web coverage and OOB
-serahkan scan --target http://example.com --profile deep --include-oob
+serahkan scan --target http://example.com --profile deep --interactsh
 
 :: Web vulnerability hunting with headless and DAST
 serahkan scan --target http://example.com --profile web-full
@@ -403,9 +394,6 @@ serahkan scan --target http://example.com --profile web-full --cookie "session=a
 
 :: Verify wrapper argument construction
 serahkan scan --target http://example.com --show-nuclei-command
-
-:: Raw Nuclei parity comparison
-serahkan scan --target http://example.com --parity-mode --show-nuclei-command --output json
 
 :: CVE-focused scan with custom severity
 serahkan scan --target http://example.com --focus cves --severity high,critical
