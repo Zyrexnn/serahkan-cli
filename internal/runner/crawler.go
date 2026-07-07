@@ -169,14 +169,17 @@ func executeCrawl(ctx context.Context, target string, domainScope string, crawlC
 		<-done
 		return CrawlResult{}, fmt.Errorf("failed to initialize crawler options: %w", err)
 	}
-	defer crawlerOptions.Close()
 
-	crawler, err := standard.New(crawlerOptions)
+	var crawler *standard.Crawler
+	crawler, err = standard.New(crawlerOptions)
 	if err != nil {
+		crawlerOptions.Close()
 		<-done
 		return CrawlResult{}, fmt.Errorf("failed to initialize crawler engine: %w", err)
 	}
 	defer crawler.Close()
+
+	defer crawlerOptions.Close()
 
 	crawlErr := crawler.Crawl(target)
 	<-done
