@@ -51,11 +51,10 @@ func SanitizeForHTML(input string) string {
 func ConvertANSIToHTML(input string) string {
 	input = SanitizeForHTML(input)
 	for code, class := range ansiToClass {
-		escaped := strings.ReplaceAll(code, "\x1b", "\x1b")
 		if class == "" {
-			input = strings.ReplaceAll(input, escaped, "</span>")
+			input = strings.ReplaceAll(input, code, "</span>")
 		} else {
-			input = strings.ReplaceAll(input, escaped, fmt.Sprintf(`<span class="%s">`, class))
+			input = strings.ReplaceAll(input, code, fmt.Sprintf(`<span class="%s">`, class))
 		}
 	}
 	input = ansiRegex.ReplaceAllString(input, "")
