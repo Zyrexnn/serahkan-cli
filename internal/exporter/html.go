@@ -258,7 +258,8 @@ func renderActionHTML(s reportSection) string {
 
 func renderHeadingHTML(s reportSection) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf(`<div class="report-block"><div class="block-title">%s</div>`, s.title))
+	b.WriteString(`<div class="report-block">`)
+	b.WriteString(fmt.Sprintf(`<div class="block-title">%s</div>`, s.title))
 	if s.content != "" {
 		b.WriteString(fmt.Sprintf(`<div class="block-content">%s</div>`, s.content))
 	}
@@ -291,51 +292,106 @@ func ExportHTML(data ReportData) (string, error) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SERAHKAN Security Report - %s</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+:root {
+  --bg-primary: #09090b;
+  --bg-secondary: #18181b;
+  --bg-tertiary: #27272a;
+  --border-color: #27272a;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --accent-green: #22c55e;
+  --accent-green-dim: rgba(34,197,94,0.15);
+  --accent-red: #ef4444;
+  --accent-red-dim: rgba(239,68,68,0.15);
+  --accent-amber: #f59e0b;
+  --accent-amber-dim: rgba(245,158,11,0.15);
+  --accent-blue: #3b82f6;
+  --accent-blue-dim: rgba(59,130,246,0.15);
+  --accent-purple: #a855f7;
+  --accent-purple-dim: rgba(168,85,247,0.15);
+}
+
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0f;color:#d0d0d0;font-family:'Inter','Segoe UI',system-ui,sans-serif;line-height:1.6;min-height:100vh}
-.container{max-width:960px;margin:0 auto;padding:40px 24px}
+body{background:var(--bg-primary);color:var(--text-primary);font-family:'Inter',system-ui,-apple-system,sans-serif;line-height:1.7;min-height:100vh;-webkit-font-smoothing:antialiased}
 
-.header{text-align:center;padding:48px 24px 40px;margin-bottom:32px;border-bottom:2px solid #1a2e1a;background:linear-gradient(180deg,#0d120d 0%%,#0a0a0f 100%%)}
-.header .logo{font-size:2.8em;font-weight:800;color:#00ff41;letter-spacing:12px;text-shadow:0 0 30px rgba(0,255,65,0.3);margin-bottom:8px}
-.header .tagline{color:#555;font-size:0.85em;letter-spacing:3px;text-transform:uppercase}
+.container{max-width:1000px;margin:0 auto;padding:48px 32px}
 
-.meta-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:32px}
-.meta-card{background:#0d0f12;border:1px solid #1a1e24;padding:18px 16px;border-radius:6px}
-.meta-card .label{color:#00ff41;font-size:0.7em;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;font-weight:600}
-.meta-card .value{color:#e0e0e0;font-size:1.05em;font-weight:500}
+/* Header */
+.header{text-align:center;padding:56px 32px 48px;margin-bottom:40px;border-bottom:1px solid var(--border-color);position:relative;overflow:hidden}
+.header::before{content:'';position:absolute;top:0;left:50%%;transform:translateX(-50%%);width:400px;height:400px;background:radial-gradient(circle,rgba(34,197,94,0.08) 0%%,transparent 70%%);pointer-events:none}
+.header .logo{font-size:3em;font-weight:800;letter-spacing:16px;margin-bottom:12px;position:relative;display:inline-block;background:linear-gradient(135deg,var(--accent-green) 0%%,#4ade80 50%%,var(--accent-green) 100%%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.header .tagline{color:var(--text-muted);font-size:0.82em;letter-spacing:4px;text-transform:uppercase;font-weight:500}
+.header .version{display:inline-block;margin-top:12px;padding:4px 12px;background:var(--accent-green-dim);color:var(--accent-green);border-radius:20px;font-size:0.72em;font-weight:600;letter-spacing:1px;text-transform:uppercase}
 
-.report-block{margin-bottom:20px;padding:24px;background:#0d0f12;border:1px solid #1a1e24;border-radius:6px}
-.block-title{color:#00ff41;font-size:1.1em;font-weight:700;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #1a1e24;text-transform:uppercase;letter-spacing:1px}
-.block-content{color:#b0b0b0;font-size:0.92em;line-height:1.8}
+/* Meta Grid */
+.meta-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:40px}
+.meta-card{background:var(--bg-secondary);border:1px solid var(--border-color);padding:20px 18px;border-radius:12px;transition:all 0.2s ease}
+.meta-card:hover{border-color:#3f3f46;transform:translateY(-1px)}
+.meta-card .label{color:var(--text-muted);font-size:0.7em;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;font-weight:600}
+.meta-card .value{color:var(--text-primary);font-size:1em;font-weight:600;word-break:break-all}
+.meta-card.highlight{border-color:var(--accent-green);background:linear-gradient(135deg,var(--accent-green-dim) 0%%,var(--bg-secondary) 100%%)}
+.meta-card.highlight .label{color:var(--accent-green)}
 
-.finding-card{margin-bottom:16px;padding:20px;background:#0d0f12;border:1px solid #1a1e24;border-left:3px solid #ff4444;border-radius:6px}
-.finding-header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
-.finding-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:#ff4444;color:#fff;font-weight:800;font-size:0.85em;border-radius:4px;flex-shrink:0}
-.finding-title{color:#e8e8e8;font-size:1.05em;font-weight:600}
-.finding-urls{margin-bottom:14px;padding:12px 14px;background:#080a0c;border-radius:4px;border:1px solid #151820}
-.finding-url-label{color:#00ff41;font-size:0.72em;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;font-weight:600}
-.finding-url{color:#8888cc;font-size:0.85em;font-family:'Courier New',monospace;padding:3px 0;word-break:break-all}
-.finding-detail{margin-bottom:8px;font-size:0.9em}
-.detail-key{color:#777;font-weight:500}
-.detail-value{color:#c8c8c8}
-.finding-code{margin-top:10px}
-.finding-code pre{background:#050709;border:1px solid #151820;border-radius:4px;padding:14px;font-family:'Courier New',monospace;font-size:0.85em;color:#aaa;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-wrap:break-word}
+/* Report Block */
+.report-block{margin-bottom:24px;padding:28px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px}
+.block-title{color:var(--text-primary);font-size:0.85em;font-weight:700;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-color);text-transform:uppercase;letter-spacing:2px;display:flex;align-items:center;gap:10px}
+.block-title::before{content:'';width:4px;height:18px;background:var(--accent-green);border-radius:2px}
+.block-content{color:var(--text-secondary);font-size:0.9em;line-height:1.9;white-space:pre-wrap}
 
-.action-card{margin-bottom:16px;padding:20px;background:#0d0f12;border:1px solid #1a1e24;border-left:3px solid #00ff41;border-radius:6px}
-.action-header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
-.action-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:#00ff41;color:#000;font-weight:800;font-size:0.85em;border-radius:4px;flex-shrink:0}
-.action-title{color:#e8e8e8;font-size:1.05em;font-weight:600}
-.action-detail{margin-bottom:8px;font-size:0.9em}
-.action-code{margin-top:10px}
-.action-code pre{background:#050709;border:1px solid #151820;border-radius:4px;padding:14px;font-family:'Courier New',monospace;font-size:0.85em;color:#aaa;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-wrap:break-word}
+/* Finding Card */
+.finding-card{margin-bottom:20px;padding:24px;background:var(--bg-secondary);border:1px solid var(--border-color);border-left:3px solid var(--accent-red);border-radius:12px;position:relative}
+.finding-header{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.finding-icon{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;background:var(--accent-red-dim);color:var(--accent-red);font-weight:800;font-size:0.85em;border-radius:8px;flex-shrink:0}
+.finding-title{color:var(--text-primary);font-size:1em;font-weight:600}
+.finding-urls{margin-bottom:18px;padding:16px 18px;background:var(--bg-primary);border-radius:8px;border:1px solid var(--border-color)}
+.finding-url-label{color:var(--accent-green);font-size:0.7em;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;font-weight:600}
+.finding-url{color:var(--accent-blue);font-size:0.85em;font-family:'JetBrains Mono',monospace;padding:4px 0;word-break:break-all;line-height:1.6}
+.finding-detail{margin-bottom:10px;font-size:0.88em;display:flex;gap:8px}
+.detail-key{color:var(--text-muted);font-weight:600;min-width:100px}
+.detail-value{color:var(--text-secondary);flex:1}
+.finding-code{margin-top:14px}
+.finding-code pre{background:var(--bg-primary);border:1px solid var(--border-color);border-radius:8px;padding:16px 18px;font-family:'JetBrains Mono',monospace;font-size:0.82em;color:var(--text-secondary);line-height:1.7;overflow-x:auto;white-space:pre-wrap;word-wrap:break-word}
 
-.footer{text-align:center;padding:32px 0;margin-top:40px;border-top:1px solid #1a1e24;color:#444;font-size:0.78em}
-.footer p{margin-bottom:4px}
+/* Action Card */
+.action-card{margin-bottom:20px;padding:24px;background:var(--bg-secondary);border:1px solid var(--border-color);border-left:3px solid var(--accent-green);border-radius:12px;position:relative}
+.action-header{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.action-icon{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;background:var(--accent-green-dim);color:var(--accent-green);font-weight:800;font-size:0.85em;border-radius:8px;flex-shrink:0}
+.action-title{color:var(--text-primary);font-size:1em;font-weight:600}
+.action-detail{margin-bottom:10px;font-size:0.88em;display:flex;gap:8px}
+.action-code{margin-top:14px}
+.action-code pre{background:var(--bg-primary);border:1px solid var(--border-color);border-radius:8px;padding:16px 18px;font-family:'JetBrains Mono',monospace;font-size:0.82em;color:var(--text-secondary);line-height:1.7;overflow-x:auto;white-space:pre-wrap;word-wrap:break-word}
 
+/* Footer */
+.footer{text-align:center;padding:40px 0;margin-top:48px;border-top:1px solid var(--border-color)}
+.footer p{color:var(--text-muted);font-size:0.78em;margin-bottom:6px;letter-spacing:0.5px}
+.footer .brand{color:var(--text-muted);font-weight:600}
+.footer .brand span{color:var(--accent-green)}
+
+/* Summary Stats */
+.summary-section{margin-bottom:40px;padding:32px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px}
+.summary-title{color:var(--text-primary);font-size:0.85em;font-weight:700;margin-bottom:20px;text-transform:uppercase;letter-spacing:2px;display:flex;align-items:center;gap:10px}
+.summary-title::before{content:'';width:4px;height:18px;background:var(--accent-blue);border-radius:2px}
+.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.summary-item{text-align:center;padding:20px;background:var(--bg-primary);border-radius:10px;border:1px solid var(--border-color)}
+.summary-item .number{font-size:2em;font-weight:800;margin-bottom:6px}
+.summary-item .number.green{color:var(--accent-green)}
+.summary-item .number.red{color:var(--accent-red)}
+.summary-item .number.amber{color:var(--accent-amber)}
+.summary-item .label{color:var(--text-muted);font-size:0.75em;text-transform:uppercase;letter-spacing:1px;font-weight:600}
+
+/* Responsive */
 @media(max-width:768px){
-.header .logo{font-size:2em;letter-spacing:6px}
-.meta-grid{grid-template-columns:repeat(2,1fr)}
+  .container{padding:24px 16px}
+  .header .logo{font-size:2em;letter-spacing:8px}
+  .meta-grid{grid-template-columns:repeat(2,1fr)}
+  .summary-grid{grid-template-columns:1fr}
+  .finding-detail,.action-detail{flex-direction:column;gap:4px}
+  .detail-key{min-width:auto}
 }
 </style>
 </head>
@@ -344,9 +400,10 @@ body{background:#0a0a0f;color:#d0d0d0;font-family:'Inter','Segoe UI',system-ui,s
 <div class="header">
 <div class="logo">SERAHKAN</div>
 <div class="tagline">AI-Powered Security Analysis Report</div>
+<div class="version">CLI v2.0</div>
 </div>
 <div class="meta-grid">
-<div class="meta-card">
+<div class="meta-card highlight">
 <div class="label">Target</div>
 <div class="value">%s</div>
 </div>
@@ -359,14 +416,14 @@ body{background:#0a0a0f;color:#d0d0d0;font-family:'Inter','Segoe UI',system-ui,s
 <div class="value">%s</div>
 </div>
 <div class="meta-card">
-<div class="label">Duration</div>
+<div class="label">Scan Duration</div>
 <div class="value">%s</div>
 </div>
 </div>
 %s
 <div class="footer">
-<p>SERAHKAN CLI Security Report &mdash; %s</p>
-<p>github.com/Zyrexnn/serahkan-cli</p>
+<p class="brand"><span>SERAHKAN</span> CLI Security Report</p>
+<p>&mdash; %s &mdash;</p>
 </div>
 </div>
 </body>
