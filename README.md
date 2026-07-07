@@ -9,6 +9,9 @@ An AI-powered Nuclei orchestration engine built with Go. `serahkan-cli` is a lig
 - **WAF-Aware Concurrency Control:** Embedded rate-limiting and sanitization mechanisms to optimize scanning speeds against strict target firewalls.
 - **Symmetric UI Terminal:** Beautiful ASCII art banner with aligned meta-summaries using rigid column layouts.
 - **Pure JSON Purity:** Dedicated `--output json` pipeline that emits strictly valid indented structural data, sanitized from terminal ANSI color codes.
+- **Default Stealth Engine:** Automatic programmatic browser User-Agent randomization from a pool of 14 modern browser signatures, signature stripping, and behavioral rate-limit jitter (±15% concurrency / ±10% rate-limit) to bypass modern cloud WAF solutions seamlessly.
+- **Pre-flight WAF Verification:** Smart early-exit mechanism that inspects target responses against 18 industrial WAF/Cloudflare block patterns (like Error 1006 or CAPTCHA walls) before scaling workers, preventing wasted scans against protected endpoints.
+- **Intelligent Interactive Crawling:** Integrated optional multi-phase pre-scan link discovery powered natively by Katana (Headless + TLS Handshake Impersonation) with an interactive shell prompt fallback when crawling yields insufficient paths.
 
 ## Installation & Setup
 
@@ -76,10 +79,20 @@ serahkan config unset ai.api_key
 
 The primary command. Runs a Nuclei scan against a target, applies profile-driven argument construction, filters results by severity, and optionally sends findings to a local LLM for defensive analysis.
 
+Without `--crawl`, the scanner defaults to an ultra-fast, single-target direct scan with built-in stealth headers (randomized User-Agent, stripped browser signatures, and behavioral jitter). All scans automatically apply stealth evasions regardless of the crawl flag.
+
+Passing `--crawl` activates the dual-phase crawler pipeline before the core Nuclei phase:
+- **Phase 1:** Headless browser rendering via Katana with TLS handshake impersonation for JavaScript-heavy single-page applications.
+- **Phase 2:** Standard HTTP parsing fallback if the headless phase fails, ensuring maximum coverage on both dynamic and static targets.
+
+When the crawler discovers more than one unique URL, discovered paths are written to a temporary targets file and passed to Nuclei via `-list` for multi-page scanning. If crawling yields 0 or 1 URL, an interactive prompt asks whether to force-scan the primary target.
+
 ```cmd
 serahkan scan --target http://example.com
 serahkan scan --target http://example.com --profile deep --output json
 serahkan scan --target http://example.com --profile brutal-aggressive --skip-ai
+serahkan scan --target http://example.com --crawl
+serahkan scan --target http://example.com --crawl --profile web-full
 ```
 
 ### `doctor`
@@ -257,6 +270,17 @@ serahkan scan --target http://example.com --profile benchmark-web --output json
 :: waf_blocked will show count of intercepted findings
 ```
 
+## Interactive Prompt Behavior
+
+When the `--crawl` flag is active and the Katana crawler extracts 0 or 1 unique URL from the target, the scanner pauses and presents an interactive prompt to the user:
+
+```cmd
+[WARN] Crawler extracted 0 unique sub-pages (target might be protected).
+[?] Crawler yielded no new paths. Force scan the primary target URL instead? (y/N):
+```
+
+Entering `y` or `yes` proceeds with a standard single-target scan against the original URL without crawling. Any other input (including pressing Enter for the default `N`) aborts the scan, returning a `scan aborted by user` message. This behavior prevents unnecessary scans against WAF-protected or single-page targets where multi-page crawling would not add value.
+
 ## Output Schemas
 
 ### Text Mode
@@ -339,6 +363,7 @@ serahkan scan --target http://example.com --profile benchmark-web --output json 
 | `--show-nuclei-command` | `false` | Print the constructed Nuclei command and remove `-silent` for engine visibility. |
 | `--parity-mode` | `false` | Minimal wrapper flags for raw Nuclei comparison. |
 | `--legacy-compatible` | `false` | Use settings close to the original wrapper behavior. |
+| `--crawl` | `false` | Enable optional programmatic multi-phase web crawling via Katana before the core scan phase. |
 | `--verbose`, `-v` | `false` | Enable verbose debug logging on stderr. |
 
 ### Configuration Precedence
