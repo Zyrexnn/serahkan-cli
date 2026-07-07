@@ -163,14 +163,39 @@ func ParseAndFilterDetailed(input io.Reader, allowedSeverities []string, options
 
 func isWAFBlocked(finding NucleiFinding) bool {
 	body := strings.ToLower(finding.Response)
-	if body == "" {
-		return false
-	}
-	for _, pattern := range wafBlockPatterns {
-		if strings.Contains(body, strings.ToLower(pattern)) {
-			return true
+	if body != "" {
+		for _, pattern := range wafBlockPatterns {
+			if strings.Contains(body, strings.ToLower(pattern)) {
+				return true
+			}
 		}
 	}
+
+	matchedAt := strings.ToLower(finding.MatchedAt)
+	if matchedAt != "" {
+		for _, pattern := range wafBlockPatterns {
+			if strings.Contains(matchedAt, strings.ToLower(pattern)) {
+				return true
+			}
+		}
+
+		wafURLPatterns := []string{
+			"cf_chl",
+			"__cf_chl",
+			"cdn-cgi",
+			"captcha",
+			"just-a-moment",
+			"is-connecting",
+			"check-browser",
+			"verify-you-are-human",
+		}
+		for _, p := range wafURLPatterns {
+			if strings.Contains(matchedAt, p) {
+				return true
+			}
+		}
+	}
+
 	return false
 }
 
