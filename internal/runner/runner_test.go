@@ -57,7 +57,7 @@ func TestBuildNucleiArgs(t *testing.T) {
 		TimeoutSeconds: 30,
 		Retries:        2,
 		NoInteractsh:   true,
-		IncludeHTTP:    true,
+		RawHTTP:        true,
 	})
 	if !strings.Contains(strings.Join(withBannerFlag, " "), "-no-banner") {
 		t.Fatalf("expected -no-banner to be included when supported")
@@ -66,7 +66,7 @@ func TestBuildNucleiArgs(t *testing.T) {
 		t.Fatalf("expected -ni to be included when NoInteractsh is true")
 	}
 	if !strings.Contains(strings.Join(withBannerFlag, " "), "-irr") {
-		t.Fatalf("expected -irr to be included when IncludeHTTP is true")
+		t.Fatalf("expected -irr to be included when RawHTTP is true")
 	}
 
 	withoutBannerFlag := buildNucleiArgs("/tmp/nuclei-no-bannerless", "https://example.com", []string{"high"}, Options{
@@ -84,21 +84,21 @@ func TestBuildNucleiArgs(t *testing.T) {
 	}
 
 	webArgs := buildNucleiArgs("/tmp/nuclei", "https://example.com", []string{"info", "low", "medium", "high", "critical"}, Options{
-		TimeoutSeconds:            30,
-		Retries:                   1,
-		Concurrency:               300,
-		RateLimit:                 800,
-		EnableHeadless:            true,
-		EnableDAST:                true,
-		AutomaticScan:             true,
-		IncludeDefaultIgnoredTags: []string{"fuzz"},
-		Headers:                   []string{"Authorization: Bearer token"},
-		Cookie:                    "sid=abc",
-		Tags:                      []string{"xss,sqli"},
-		ExcludeTags:               []string{"dos"},
-		Templates:                 []string{"http/exposures"},
-		Workflows:                 []string{"workflows/test.yaml"},
-		Types:                     []string{"http,headless"},
+		TimeoutSeconds: 30,
+		Retries:        1,
+		Concurrency:    300,
+		RateLimit:      800,
+		EnableHeadless: true,
+		EnableDAST:     true,
+		TechDetect:     true,
+		ForceTags:      []string{"fuzz"},
+		Headers:        []string{"Authorization: Bearer token"},
+		Cookie:         "sid=abc",
+		Tags:           []string{"xss,sqli"},
+		ExcludeTags:    []string{"dos"},
+		Templates:      []string{"http/exposures"},
+		Workflows:      []string{"workflows/test.yaml"},
+		Protocols:      []string{"http,headless"},
 	})
 	webJoined := strings.Join(webArgs, " ")
 	expectedParts := []string{
@@ -120,23 +120,6 @@ func TestBuildNucleiArgs(t *testing.T) {
 		if !strings.Contains(webJoined, expected) {
 			t.Fatalf("expected args to contain %q, got %q", expected, webJoined)
 		}
-	}
-
-	parityArgs := buildNucleiArgs("/tmp/nuclei", "https://example.com", []string{"high"}, Options{
-		TimeoutSeconds: 30,
-		Retries:        1,
-		NoInteractsh:   true,
-		ParityMode:     true,
-	})
-	parityJoined := strings.Join(parityArgs, " ")
-	unexpectedParityParts := []string{"-c ", "-rl ", "-omit-raw", "-no-banner"}
-	for _, unexpected := range unexpectedParityParts {
-		if strings.Contains(parityJoined, unexpected) {
-			t.Fatalf("expected parity args to omit %q, got %q", unexpected, parityJoined)
-		}
-	}
-	if !strings.Contains(parityJoined, "-ni") {
-		t.Fatalf("expected parity args to preserve requested -ni, got %q", parityJoined)
 	}
 
 	showCmdArgs := buildNucleiArgs("/tmp/nuclei", "https://example.com", []string{"high"}, Options{

@@ -208,22 +208,20 @@ func makeCommand() *cobra.Command {
 	cmd.Flags().String("severity", "", "")
 	cmd.Flags().String("focus", "", "")
 	cmd.Flags().Int("timeout", 0, "")
-	cmd.Flags().Int("scan-timeout", 0, "")
+	cmd.Flags().Int("max-duration", 0, "")
 	cmd.Flags().Int("retries", 0, "")
 	cmd.Flags().Int("concurrency", 0, "")
 	cmd.Flags().Int("rate-limit", 0, "")
-	cmd.Flags().Bool("no-interactsh", false, "")
-	cmd.Flags().Bool("include-http", false, "")
-	cmd.Flags().Bool("include-low-info", false, "")
-	cmd.Flags().Bool("include-oob", false, "")
+	cmd.Flags().Bool("interactsh", false, "")
+	cmd.Flags().Bool("raw-http", false, "")
 	cmd.Flags().Bool("enable-headless", false, "")
 	cmd.Flags().Bool("enable-dast", false, "")
-	cmd.Flags().Bool("automatic-scan", false, "")
-	cmd.Flags().StringSlice("include-default-ignored-tags", nil, "")
-	cmd.Flags().StringSlice("type", nil, "")
+	cmd.Flags().Bool("tech-detect", false, "")
+	cmd.Flags().StringSlice("force-tags", nil, "")
+	cmd.Flags().StringSlice("protocols", nil, "")
 	cmd.Flags().Bool("skip-ai", false, "")
 	cmd.Flags().Int("ai-timeout", 0, "")
-	cmd.Flags().Int("limit", 0, "")
+	cmd.Flags().Int("ai-findings", 0, "")
 	return cmd
 }
 
@@ -237,11 +235,11 @@ func TestApplyScanProfile(t *testing.T) {
 		cmd := makeCommand()
 		applyScanProfile(cmd)
 
-		if scanOptions.timeout != 8 || scanOptions.scanTimeout != 60 || scanOptions.limit != 3 {
-			t.Fatalf("unexpected fast profile values: timeout=%d scan-timeout=%d limit=%d", scanOptions.timeout, scanOptions.scanTimeout, scanOptions.limit)
+		if scanOptions.timeout != 8 || scanOptions.maxDuration != 60 || scanOptions.aiFindings != 3 {
+			t.Fatalf("unexpected fast profile values: timeout=%d max-duration=%d ai-findings=%d", scanOptions.timeout, scanOptions.maxDuration, scanOptions.aiFindings)
 		}
-		if !scanOptions.noInteractsh || !scanOptions.skipAI {
-			t.Fatalf("expected fast profile to enable no-interactsh and skip-ai")
+		if scanOptions.interactsh || !scanOptions.skipAI {
+			t.Fatalf("expected fast profile to disable interactsh and skip AI")
 		}
 		if scanOptions.severity != "high,critical" {
 			t.Fatalf("expected fast profile severity override, got %q", scanOptions.severity)
@@ -252,14 +250,14 @@ func TestApplyScanProfile(t *testing.T) {
 		scanOptions = zeroScanOptions()
 		scanOptions.profile = "deep"
 		scanOptions.timeout = 12
-		scanOptions.noInteractsh = true
+		scanOptions.interactsh = false
 
 		cmd := makeCommand()
 		if err := cmd.Flags().Set("timeout", "12"); err != nil {
 			t.Fatalf("failed to set timeout flag: %v", err)
 		}
-		if err := cmd.Flags().Set("no-interactsh", "true"); err != nil {
-			t.Fatalf("failed to set no-interactsh flag: %v", err)
+		if err := cmd.Flags().Set("interactsh", "false"); err != nil {
+			t.Fatalf("failed to set interactsh flag: %v", err)
 		}
 
 		applyScanProfile(cmd)
@@ -267,11 +265,11 @@ func TestApplyScanProfile(t *testing.T) {
 		if scanOptions.timeout != 12 {
 			t.Fatalf("expected explicit timeout to be preserved, got %d", scanOptions.timeout)
 		}
-		if !scanOptions.noInteractsh {
-			t.Fatalf("expected explicit no-interactsh to be preserved")
+		if scanOptions.interactsh {
+			t.Fatalf("expected explicit interactsh=false to be preserved")
 		}
-		if scanOptions.scanTimeout != 300 || scanOptions.limit != 10 {
-			t.Fatalf("expected deep profile defaults on unset fields, got scan-timeout=%d limit=%d", scanOptions.scanTimeout, scanOptions.limit)
+		if scanOptions.maxDuration != 300 || scanOptions.aiFindings != 10 {
+			t.Fatalf("expected deep profile defaults on unset fields, got max-duration=%d ai-findings=%d", scanOptions.maxDuration, scanOptions.aiFindings)
 		}
 	})
 
@@ -285,13 +283,13 @@ func TestApplyScanProfile(t *testing.T) {
 		if scanOptions.severity != "info,low,medium,high,critical" {
 			t.Fatalf("expected web-full severity coverage, got %q", scanOptions.severity)
 		}
-		if scanOptions.noInteractsh || !scanOptions.includeHTTP || !scanOptions.enableHeadless || !scanOptions.enableDAST {
+		if !scanOptions.interactsh || !scanOptions.rawHTTP || !scanOptions.enableHeadless || !scanOptions.enableDAST {
 			t.Fatalf("expected web-full to enable OOB, HTTP details, headless, and DAST")
 		}
-		if scanOptions.automaticScan {
+		if scanOptions.techDetect {
 			t.Fatalf("expected web-full to leave automatic scan opt-in because Nuclei can fail when no tech tag matches")
 		}
-		if !containsString(scanOptions.includeDefaultIgnoredTags, "fuzz") {
+		if !containsString(scanOptions.forceTags, "fuzz") {
 			t.Fatalf("expected web-full to include fuzz ignored tag")
 		}
 	})
@@ -306,16 +304,16 @@ func TestApplyScanProfile(t *testing.T) {
 		if scanOptions.severity != "info,low,medium,high,critical" {
 			t.Fatalf("expected brutal-aggressive severity coverage, got %q", scanOptions.severity)
 		}
-		if scanOptions.timeout != 45 || scanOptions.scanTimeout != 600 || scanOptions.retries != 3 {
-			t.Fatalf("unexpected brutal-aggressive timing values: timeout=%d scan-timeout=%d retries=%d", scanOptions.timeout, scanOptions.scanTimeout, scanOptions.retries)
+		if scanOptions.timeout != 45 || scanOptions.maxDuration != 600 || scanOptions.retries != 3 {
+			t.Fatalf("unexpected brutal-aggressive timing values: timeout=%d max-duration=%d retries=%d", scanOptions.timeout, scanOptions.maxDuration, scanOptions.retries)
 		}
-		if scanOptions.noInteractsh || !scanOptions.includeHTTP || !scanOptions.enableHeadless || !scanOptions.enableDAST || !scanOptions.skipAI {
+		if !scanOptions.interactsh || !scanOptions.rawHTTP || !scanOptions.enableHeadless || !scanOptions.enableDAST || !scanOptions.skipAI {
 			t.Fatalf("expected brutal-aggressive to enable OOB, HTTP details, headless, DAST, and skip-ai")
 		}
-		if !containsString(scanOptions.includeDefaultIgnoredTags, "cve") || !containsString(scanOptions.includeDefaultIgnoredTags, "sqli") || !containsString(scanOptions.includeDefaultIgnoredTags, "xss") || !containsString(scanOptions.includeDefaultIgnoredTags, "lfi") || !containsString(scanOptions.includeDefaultIgnoredTags, "rce") || !containsString(scanOptions.includeDefaultIgnoredTags, "misconfig") || !containsString(scanOptions.includeDefaultIgnoredTags, "exposure") {
+		if !containsString(scanOptions.forceTags, "cve") || !containsString(scanOptions.forceTags, "sqli") || !containsString(scanOptions.forceTags, "xss") || !containsString(scanOptions.forceTags, "lfi") || !containsString(scanOptions.forceTags, "rce") || !containsString(scanOptions.forceTags, "misconfig") || !containsString(scanOptions.forceTags, "exposure") {
 			t.Fatalf("expected brutal-aggressive to include cve,sqli,xss,lfi,rce,misconfig,exposure tags")
 		}
-		if !containsString(scanOptions.types, "http") || !containsString(scanOptions.types, "dns") {
+		if !containsString(scanOptions.protocols, "http") || !containsString(scanOptions.protocols, "dns") {
 			t.Fatalf("expected brutal-aggressive to load http/headless/javascript/dns types")
 		}
 		if !scanOptions.brutalAggressive {
@@ -336,7 +334,7 @@ func TestApplyScanProfile(t *testing.T) {
 		if scanOptions.focus != "web-vulns" {
 			t.Fatalf("expected benchmark-web focus to default to web-vulns, got %q", scanOptions.focus)
 		}
-		if !scanOptions.noInteractsh || !scanOptions.includeHTTP || !scanOptions.skipAI {
+		if scanOptions.interactsh || !scanOptions.rawHTTP || !scanOptions.skipAI {
 			t.Fatalf("expected benchmark-web to enable benchmark web scan defaults")
 		}
 		if scanOptions.enableDAST {
@@ -361,7 +359,7 @@ func TestApplyScanProfile(t *testing.T) {
 		if !scanOptions.enableDAST {
 			t.Fatalf("expected fuzz focus to enable DAST")
 		}
-		if !containsString(scanOptions.includeDefaultIgnoredTags, "fuzz") || !containsString(scanOptions.tags, "fuzz") {
+		if !containsString(scanOptions.forceTags, "fuzz") || !containsString(scanOptions.tags, "fuzz") {
 			t.Fatalf("expected fuzz focus to include fuzz tag controls")
 		}
 	})
@@ -373,23 +371,19 @@ func zeroScanOptions() struct {
 	profile                   string
 	focus                     string
 	timeout                   int
-	scanTimeout               int
+	maxDuration               int
 	retries                   int
 	concurrency               int
 	rateLimit                 int
 	verbose                   bool
-	noInteractsh              bool
-	includeHTTP               bool
-	includeLowInfo            bool
-	includeOOB                bool
+	interactsh                bool
+	rawHTTP                   bool
 	enableHeadless            bool
 	enableDAST                bool
-	automaticScan             bool
-	includeDefaultIgnoredTags []string
+	techDetect                bool
+	forceTags                 []string
 	brutalAggressive          bool
 	benchmarkWeb              bool
-	parityMode                bool
-	legacyCompatible          bool
 	showNucleiCommand         bool
 	headers                   []string
 	cookie                    string
@@ -398,13 +392,13 @@ func zeroScanOptions() struct {
 	excludeTags               []string
 	templates                 []string
 	workflows                 []string
-	types                     []string
+	protocols                 []string
 	skipAI                    bool
 	aiEndpoint                string
 	aiModel                   string
 	aiApiKey                  string
 	aiTimeout                 int
-	limit                     int
+	aiFindings                int
 	output                    string
 	export                    string
 	crawl                     bool
@@ -415,23 +409,19 @@ func zeroScanOptions() struct {
 		profile                   string
 		focus                     string
 		timeout                   int
-		scanTimeout               int
+		maxDuration               int
 		retries                   int
 		concurrency               int
 		rateLimit                 int
 		verbose                   bool
-		noInteractsh              bool
-		includeHTTP               bool
-		includeLowInfo            bool
-		includeOOB                bool
+		interactsh                bool
+		rawHTTP                   bool
 		enableHeadless            bool
 		enableDAST                bool
-		automaticScan             bool
-		includeDefaultIgnoredTags []string
+		techDetect                bool
+		forceTags                 []string
 		brutalAggressive          bool
 		benchmarkWeb              bool
-		parityMode                bool
-		legacyCompatible          bool
 		showNucleiCommand         bool
 		headers                   []string
 		cookie                    string
@@ -440,13 +430,13 @@ func zeroScanOptions() struct {
 		excludeTags               []string
 		templates                 []string
 		workflows                 []string
-		types                     []string
+		protocols                 []string
 		skipAI                    bool
 		aiEndpoint                string
 		aiModel                   string
 		aiApiKey                  string
 		aiTimeout                 int
-		limit                     int
+		aiFindings                int
 		output                    string
 		export                    string
 		crawl                     bool
