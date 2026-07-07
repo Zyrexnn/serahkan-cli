@@ -26,12 +26,11 @@ type Options struct {
 	NoInteractsh              bool
 	Concurrency               int
 	RateLimit                 int
-	ParityMode                bool
-	IncludeHTTP               bool
+	RawHTTP                   bool
 	EnableHeadless            bool
 	EnableDAST                bool
-	AutomaticScan             bool
-	IncludeDefaultIgnoredTags []string
+	TechDetect                bool
+	ForceTags                 []string
 	Headers                   []string
 	Cookie                    string
 	CookieFile                string
@@ -39,9 +38,8 @@ type Options struct {
 	ExcludeTags               []string
 	Templates                 []string
 	Workflows                 []string
-	Types                     []string
+	Protocols                 []string
 	ShowCommand               bool
-	LegacyCompatible          bool
 	LogWriter                 io.Writer
 	TargetsFile               string
 	EnableCrawl               bool
@@ -118,7 +116,11 @@ func RunNucleiScan(ctx context.Context, target string, allowedSeverities []strin
 func promptForceScan(logWriter io.Writer) bool {
 	fmt.Fprintf(logWriter, "[?] Crawler yielded no new paths. Force scan the primary target URL instead? (y/N): ")
 	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Fprintln(logWriter)
+		return false
+	}
 	input = strings.TrimSpace(strings.ToLower(input))
 	return input == "y" || input == "yes"
 }
@@ -186,9 +188,9 @@ func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []s
 	if waitErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) {
-			if options.AutomaticScan && isAutomaticScanNoTemplateError(stderr.String()) {
+			if options.TechDetect && isAutomaticScanNoTemplateError(stderr.String()) {
 				fmt.Fprintln(options.LogWriter, "[WARN] Nuclei automatic scan found no matching tech-tag templates; retrying without -as")
-				options.AutomaticScan = false
+				options.TechDetect = false
 				return RunNucleiDetailed(ctx, target, allowedSeverities, options)
 			}
 
@@ -248,20 +250,18 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		args = append(args[:3], append([]string{"-silent"}, args[3:]...)...)
 	}
 
-	if !options.ParityMode {
-		args = append(args,
-			"-c", fmt.Sprint(defaultInt(options.Concurrency, 150)),
-			"-rl", fmt.Sprint(defaultInt(options.RateLimit, 500)),
-		)
-	}
+	args = append(args,
+		"-c", fmt.Sprint(defaultInt(options.Concurrency, 150)),
+		"-rl", fmt.Sprint(defaultInt(options.RateLimit, 500)),
+	)
 
-	if options.IncludeHTTP {
+	if options.RawHTTP {
 		args = append(args, "-irr")
-	} else if !options.ParityMode {
+	} else {
 		args = append(args, "-omit-raw")
 	}
 
-	if !options.ParityMode && supportsNucleiFlag(nucleiPath, "-no-banner") {
+	if supportsNucleiFlag(nucleiPath, "-no-banner") {
 		args = append(args, "-no-banner")
 	}
 
@@ -277,11 +277,11 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		args = append(args, "-dast")
 	}
 
-	if options.AutomaticScan {
+	if options.TechDetect {
 		args = append(args, "-as")
 	}
 
-	for _, tag := range normalizeList(options.IncludeDefaultIgnoredTags) {
+	for _, tag := range normalizeList(options.ForceTags) {
 		args = append(args, "-itags", tag)
 	}
 
@@ -313,8 +313,8 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		args = append(args, "-w", workflows)
 	}
 
-	if types := strings.Join(normalizeList(options.Types), ","); types != "" {
-		args = append(args, "-type", types)
+	if protocols := strings.Join(normalizeList(options.Protocols), ","); protocols != "" {
+		args = append(args, "-type", protocols)
 	}
 
 	return args
@@ -443,6 +443,10 @@ func checkWAFBlock(ctx context.Context, target string, logWriter io.Writer) erro
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == 0 {
+		return nil
+	}
+
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 	if err != nil {
 		return nil
@@ -464,7 +468,14 @@ func checkWAFBlock(ctx context.Context, target string, logWriter io.Writer) erro
 		return fmt.Errorf("target %s is behind Cloudflare protection", target)
 	}
 
-	_ = lowerHeaders
+	if strings.Contains(lowerHeaders, "cloudflare") ||
+		strings.Contains(lowerHeaders, "imperva") ||
+		strings.Contains(lowerHeaders, "incapsula") ||
+		strings.Contains(lowerHeaders, "akamai") ||
+		strings.Contains(lowerHeaders, "waf") {
+		fmt.Fprintf(logWriter, "[BLOCKED] WAF/security server header detected on %s (server: %s)\n", target, lowerHeaders)
+		return fmt.Errorf("target %s appears to be behind a WAF/security filter (server header: %s)", target, lowerHeaders)
+	}
 
 	return nil
 }
