@@ -7,6 +7,7 @@ An AI-powered Nuclei orchestration engine built with Go. `serahkan-cli` is a lig
 - **Native Configuration Wizard:** Setup your local AI endpoint and model once via `serahkan config set ai.endpoint ai.model` without touching configuration files manually.
 - **Smart Configuration Fallback:** Uses an elegant hierarchical priority system (`CLI Flags` > `config.json` > `Profile Defaults`).
 - **WAF-Aware Concurrency Control:** Embedded rate-limiting and sanitization mechanisms to optimize scanning speeds against strict target firewalls.
+- **Mass Scanning:** Scan multiple targets from a file with `--target-file`, powered by Nuclei's native `-list` flag.
 - **Symmetric UI Terminal:** Beautiful ASCII art banner with aligned meta-summaries using rigid column layouts.
 - **Pure JSON Purity:** Dedicated `--output json` pipeline that emits strictly valid indented structural data, sanitized from terminal ANSI color codes.
 - **Default Stealth Engine:** Automatic programmatic browser User-Agent randomization from a pool of 14 modern browser signatures, signature stripping, and behavioral rate-limit jitter (±15% concurrency / ±10% rate-limit) to bypass modern cloud WAF solutions seamlessly.
@@ -47,12 +48,19 @@ Run your targeted vulnerability scan. The tool automatically detects your `confi
 serahkan scan --target https://example.com/login --profile benchmark-web
 ```
 
+For mass scanning, provide a file with one URL per line:
+
+```cmd
+serahkan scan --target-file targets.txt --profile deep --output json
+```
+
 ### 3. Pure JSON Output (For Pipelines/Dashboards)
 
 Generate raw structural pretty-printed JSON logs, entirely isolated from styling pipelines:
 
 ```cmd
 serahkan scan --target https://example.com/login --profile benchmark-web --output json
+serahkan scan --target-file targets.txt --output json > mass-report.json
 ```
 
 ### 4. Diagnostics Mode (Skip AI)
@@ -80,7 +88,7 @@ serahkan config unset ai.api_key
 
 ### `scan`
 
-The primary command. Runs a Nuclei scan against a target, applies profile-driven argument construction, filters results by severity, and optionally sends findings to a local LLM for defensive analysis.
+The primary command. Runs a Nuclei scan against a target or a list of targets, applies profile-driven argument construction, filters results by severity, and optionally sends findings to a local LLM for defensive analysis.
 
 Without `--crawl`, the scanner defaults to an ultra-fast, single-target direct scan with built-in stealth headers (randomized User-Agent, stripped browser signatures, and behavioral jitter). All scans automatically apply stealth evasions regardless of the crawl flag.
 
@@ -89,6 +97,23 @@ Passing `--crawl` activates the dual-phase crawler pipeline before the core Nucl
 - **Phase 2:** Standard HTTP parsing fallback if the headless phase fails, ensuring maximum coverage on both dynamic and static targets.
 
 When the crawler discovers more than one unique URL, discovered paths are written to a temporary targets file and passed to Nuclei via `-list` for multi-page scanning. If crawling yields 0 or 1 URL, an interactive prompt asks whether to force-scan the primary target.
+
+#### Mass Scanning with `--target-file`
+
+Scan multiple targets in a single run by providing a file containing one URL per line. When `--target-file` is used, Nuclei receives the list via its native `-list` flag. The file is validated before execution — an error is returned if the file does not exist or is not readable.
+
+```cmd
+serahkan scan --target-file targets.txt
+serahkan scan -T targets.txt --profile deep --output json
+serahkan scan --target-file targets.txt --skip-ai --show-nuclei-command
+```
+
+Example `targets.txt`:
+```
+http://example.com
+http://test.example.com
+http://api.example.com
+```
 
 ```cmd
 serahkan scan --target http://example.com
@@ -324,7 +349,8 @@ serahkan scan --target http://example.com --profile benchmark-web --output json 
 
 | Flag | Default | Description |
 |---|---|---|
-| `--target`, `-t` | *(required)* | Target URL to scan. Must start with `http://` or `https://`. |
+| `--target`, `-t` | *(one required)* | Target URL to scan. Must start with `http://` or `https://`. Mutually exclusive with `--target-file`. |
+| `--target-file`, `-T` | *(one required)* | File containing target URLs to scan (one per line). Mutually exclusive with `--target`. |
 | `--profile` | `balanced` | Scan preset: `fast`, `balanced`, `deep`, `web-full`, `benchmark-web`, or `brutal-aggressive`. |
 | `--focus` | *(none)* | Template focus preset: `exposures`, `web-vulns`, `fuzz`, `misconfig`, or `cves`. |
 | `--severity` | `medium,high,critical` | Comma-separated severity levels. Pass `info,low,medium,high,critical` to enable everything. |
@@ -400,4 +426,13 @@ serahkan scan --target http://example.com --focus cves --severity high,critical
 
 :: JSON report saved to file
 serahkan scan --target http://example.com --profile balanced --output json > scan-report.json
+
+:: Mass scan multiple targets from a file
+serahkan scan --target-file targets.txt --profile deep --output json
+
+:: Mass scan with full web coverage
+serahkan scan -T targets.txt --profile web-full --cookie "session=abc123"
+
+:: Mass scan skipping AI for fast triage
+serahkan scan --target-file targets.txt --skip-ai --show-nuclei-command
 ```
