@@ -19,6 +19,7 @@ type ReportData struct {
 	FindingCount int
 	AIUsed       bool
 	AIStatus     string
+	Version      string
 }
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)

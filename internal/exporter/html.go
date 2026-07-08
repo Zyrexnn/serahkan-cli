@@ -400,7 +400,7 @@ body{background:var(--bg-primary);color:var(--text-primary);font-family:'Inter',
 <div class="header">
 <div class="logo">SERAHKAN</div>
 <div class="tagline">AI-Powered Security Analysis Report</div>
-<div class="version">CLI v2.0</div>
+<div class="version">CLI %s</div>
 </div>
 <div class="meta-grid">
 <div class="meta-card highlight">
@@ -428,6 +428,7 @@ body{background:var(--bg-primary);color:var(--text-primary);font-family:'Inter',
 </div>
 </body>
 </html>`,
+		versionLabel(data.Version),
 		targetEsc,
 		targetEsc,
 		data.FindingCount,
@@ -444,4 +445,11 @@ body{background:var(--bg-primary);color:var(--text-primary);font-family:'Inter',
 	}
 
 	return savedPath, nil
+}
+
+func versionLabel(v string) string {
+	if v == "" {
+		return "dev"
+	}
+	return v
 }

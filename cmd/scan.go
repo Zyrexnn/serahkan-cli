@@ -225,6 +225,15 @@ var scanCmd = &cobra.Command{
 		fmt.Fprintf(logOut, "%s raw=%s filtered=%s severity_skipped=%s waf_blocked=%s malformed=%s\n", style.TagFilter, style.Metric(fmt.Sprintf("%d", scanResult.RawFindings)), style.Metric(fmt.Sprintf("%d", len(findings))), style.Metric(fmt.Sprintf("%d", scanResult.FilteredBySeverity)), style.Metric(fmt.Sprintf("%d", scanResult.WAFBlocked)), style.Metric(fmt.Sprintf("%d", scanResult.MalformedLines)))
 
 		if len(findings) == 0 {
+			if exportBuf != nil {
+				fmt.Fprintf(exportBuf, "Target: %s\n", targetLabel)
+				fmt.Fprintf(exportBuf, "Severities: %s\n", strings.Join(allowedSeverities, ", "))
+				fmt.Fprintf(exportBuf, "Findings: 0\n")
+				fmt.Fprintf(exportBuf, "Duration: %s\n", formatDuration(time.Since(startedAt)))
+				for _, reason := range diagnostics {
+					fmt.Fprintf(exportBuf, "  - %s\n", reason)
+				}
+			}
 			return emitNoFindings(out, targetLabel, allowedSeverities, scanOptions.output, time.Since(startedAt), scanResult, diagnostics)
 		}
 
@@ -235,6 +244,26 @@ var scanCmd = &cobra.Command{
 
 		if len(findings) > scanOptions.aiFindings {
 			findings = findings[:scanOptions.aiFindings]
+		}
+
+		if exportBuf != nil {
+			fmt.Fprintf(exportBuf, "Filtered Nuclei findings requiring defensive analysis:\n")
+			for i, f := range findings {
+				fmt.Fprintf(exportBuf, "\nFinding %d\n", i+1)
+				fmt.Fprintf(exportBuf, "Template ID: %s\n", f.TemplateID)
+				fmt.Fprintf(exportBuf, "Name: %s\n", f.Name)
+				fmt.Fprintf(exportBuf, "Severity: %s\n", f.Severity)
+				fmt.Fprintf(exportBuf, "Matched At: %s\n", f.MatchedAt)
+				if f.Host != "" {
+					fmt.Fprintf(exportBuf, "Host: %s\n", f.Host)
+				}
+				if f.Info.Description != "" {
+					fmt.Fprintf(exportBuf, "Description: %s\n", f.Info.Description)
+				}
+				if f.CurlCommand != "" {
+					fmt.Fprintf(exportBuf, "Curl Command: %s\n", f.CurlCommand)
+				}
+			}
 		}
 
 		analysis := ""
@@ -272,8 +301,15 @@ var scanCmd = &cobra.Command{
 					aiStatus = "unavailable"
 					aiError = aiErr.Error()
 				}
+				if exportBuf != nil && analysis != "" {
+					fmt.Fprintln(exportBuf)
+					fmt.Fprintln(exportBuf, analysis)
+				}
 			} else {
 				streamed = true
+				if exportBuf != nil {
+					fmt.Fprintln(exportBuf)
+				}
 				style.PrintAIReportHeader(actualOut)
 				var lineBuf strings.Builder
 				var aiErr error
@@ -289,11 +325,17 @@ var scanCmd = &cobra.Command{
 						lineBuf.Reset()
 						lineBuf.WriteString(raw[idx+1:])
 						style.PrintAIReportLine(actualOut, line)
+						if exportBuf != nil {
+							fmt.Fprintln(exportBuf, line)
+						}
 					}
 				})
 				remaining := strings.TrimSpace(lineBuf.String())
 				if remaining != "" {
 					style.PrintAIReportLine(actualOut, remaining)
+					if exportBuf != nil {
+						fmt.Fprintln(exportBuf, remaining)
+					}
 				}
 				style.PrintAIReportFooter(actualOut)
 				aiUsed = true
@@ -335,6 +377,7 @@ var scanCmd = &cobra.Command{
 				FindingCount: len(findings),
 				AIUsed:       aiUsed,
 				AIStatus:     aiStatus,
+				Version:      Version,
 			}
 
 			var savedPath string
