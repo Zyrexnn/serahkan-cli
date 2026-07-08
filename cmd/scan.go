@@ -96,7 +96,6 @@ var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Run a Nuclei scan against a target",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Fprintln(os.Stderr, "[DEBUG-CMD] Memulai proses scan dari CLI")
 		out := cmd.OutOrStdout()
 		logOut := cmd.ErrOrStderr()
 		startedAt := time.Now()

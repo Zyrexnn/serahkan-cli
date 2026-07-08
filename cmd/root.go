@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/Zyrexnn/serahkan-cli/internal/style"
@@ -8,11 +9,11 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:          "serahkan",
-	Short:        "AI-powered bug bounty and pentesting CLI wrapper",
-	SilenceUsage: true,
+	Use:           "serahkan",
+	Short:         "AI-powered bug bounty and pentesting CLI wrapper",
+	SilenceUsage:  true,
 	SilenceErrors: true,
-	Version:      Version,
+	Version:       Version,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if cmd.Name() != "version" {
 			style.PrintBanner(cmd.ErrOrStderr(), Version)
@@ -22,6 +23,7 @@ var rootCmd = &cobra.Command{
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, style.Red.Sprint(err))
 		os.Exit(1)
 	}
 }

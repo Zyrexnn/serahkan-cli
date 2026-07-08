@@ -126,8 +126,6 @@ func promptForceScan(logWriter io.Writer) bool {
 }
 
 func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []string, options Options) (Result, error) {
-	fmt.Fprintln(os.Stderr, "[DEBUG-STEP-1] Masuk ke fungsi scan utama")
-
 	nucleiPath, err := ResolveNucleiPath()
 	if err != nil {
 		return Result{}, err
