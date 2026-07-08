@@ -75,7 +75,7 @@ func RunNucleiScan(ctx context.Context, target string, allowedSeverities []strin
 		options.LogWriter = io.Discard
 	}
 
-	if !options.EnableCrawl {
+	if !options.EnableCrawl || options.TargetsFile != "" {
 		return RunNucleiDetailed(ctx, target, allowedSeverities, options)
 	}
 
@@ -126,17 +126,19 @@ func promptForceScan(logWriter io.Writer) bool {
 }
 
 func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []string, options Options) (Result, error) {
+	fmt.Fprintln(os.Stderr, "[DEBUG-STEP-1] Masuk ke fungsi scan utama")
+
 	nucleiPath, err := ResolveNucleiPath()
 	if err != nil {
 		return Result{}, err
 	}
 
 	if options.TimeoutSeconds <= 0 {
-		options.TimeoutSeconds = 30
+		options.TimeoutSeconds = 10
 	}
 
 	if options.Retries < 0 {
-		options.Retries = 0
+		options.Retries = 2
 	}
 
 	if options.LogWriter == nil {
@@ -147,6 +149,14 @@ func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []s
 	command := append([]string{nucleiPath}, nucleiArgs...)
 
 	cmd := exec.CommandContext(ctx, nucleiPath, nucleiArgs...)
+
+	if options.Verbose {
+		fmt.Fprintf(os.Stderr, "[DEBUG-STEP-2] Biner Nuclei dipanggil: %s\n", nucleiPath)
+		for i, a := range nucleiArgs {
+			fmt.Fprintf(os.Stderr, "[DEBUG-ARG %d] %q\n", i, a)
+		}
+		fmt.Fprintf(os.Stderr, "[DEBUG-CMD-STRING] %s\n", cmd.String())
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -170,6 +180,11 @@ func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []s
 		LogWriter: options.LogWriter,
 	})
 	waitErr := cmd.Wait()
+
+	if stderr.Len() > 0 {
+		fmt.Fprintf(os.Stderr, "[DEBUG-ERROR] Nuclei Stderr: %s\n", strings.TrimSpace(stderr.String()))
+	}
+
 	result := Result{
 		Findings:           parseResult.Findings,
 		RawFindings:        parseResult.RawFindings,
@@ -237,7 +252,6 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		"-severity", strings.Join(allowedSeverities, ","),
 		"-timeout", fmt.Sprint(options.TimeoutSeconds),
 		"-retries", fmt.Sprint(options.Retries),
-		"-leave-default-ports",
 	}
 
 	if options.TargetsFile != "" {
@@ -246,13 +260,9 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		args = append(args, "-target", target)
 	}
 
-	if !options.ShowCommand {
-		args = append(args[:3], append([]string{"-silent"}, args[3:]...)...)
-	}
-
 	args = append(args,
-		"-c", fmt.Sprint(defaultInt(options.Concurrency, 150)),
-		"-rl", fmt.Sprint(defaultInt(options.RateLimit, 500)),
+		"-c", fmt.Sprint(options.Concurrency),
+		"-rl", fmt.Sprint(options.RateLimit),
 	)
 
 	if options.RawHTTP {
@@ -263,6 +273,10 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 
 	if supportsNucleiFlag(nucleiPath, "-no-banner") {
 		args = append(args, "-no-banner")
+	}
+
+	if supportsNucleiFlag(nucleiPath, "-random-agent") {
+		args = append(args, "-random-agent")
 	}
 
 	if options.NoInteractsh {
@@ -285,7 +299,7 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		args = append(args, "-itags", tag)
 	}
 
-	for _, header := range normalizeList(options.Headers) {
+	for _, header := range options.Headers {
 		args = append(args, "-H", header)
 	}
 
@@ -462,12 +476,6 @@ func checkWAFBlock(ctx context.Context, target string, logWriter io.Writer) erro
 	}
 
 	lowerHeaders := strings.ToLower(strings.Join(resp.Header.Values("Server"), " "))
-	cfRay := resp.Header.Get("Cf-Ray")
-	if cfRay != "" {
-		fmt.Fprintf(logWriter, "[BLOCKED] Cloudflare protection detected on %s (Cf-Ray: %s)\n", target, cfRay)
-		return fmt.Errorf("target %s is behind Cloudflare protection", target)
-	}
-
 	if strings.Contains(lowerHeaders, "cloudflare") ||
 		strings.Contains(lowerHeaders, "imperva") ||
 		strings.Contains(lowerHeaders, "incapsula") ||

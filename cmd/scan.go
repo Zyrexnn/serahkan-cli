@@ -1,4 +1,4 @@
-package cmd
+	package cmd
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 
 var scanOptions struct {
 	target                    string
+	targetFile                string
 	severity                  string
 	profile                   string
 	focus                     string
@@ -94,19 +96,36 @@ var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Run a Nuclei scan against a target",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintln(os.Stderr, "[DEBUG-CMD] Memulai proses scan dari CLI")
 		out := cmd.OutOrStdout()
 		logOut := cmd.ErrOrStderr()
 		startedAt := time.Now()
 
-		var exportBuf *strings.Builder
-		var actualOut io.Writer = out
-		if scanOptions.export != "" {
-			exportBuf = &strings.Builder{}
-			actualOut = io.MultiWriter(out, exportBuf)
-		}
+	var exportBuf *strings.Builder
+	var actualOut io.Writer = out
+	if scanOptions.export != "" {
+		exportBuf = &strings.Builder{}
+		actualOut = out
+	}
 
 		applyScanConfigDefaults(cmd)
 		applyScanProfile(cmd)
+
+		scanOptions.targetFile = strings.TrimSpace(scanOptions.targetFile)
+
+		if scanOptions.targetFile != "" {
+			if _, err := os.Stat(scanOptions.targetFile); err != nil {
+				return fmt.Errorf("target file not found or not readable: %s", scanOptions.targetFile)
+			}
+		}
+
+		if scanOptions.target == "" && scanOptions.targetFile == "" {
+			return fmt.Errorf("either --target or --target-file is required")
+		}
+
+		if scanOptions.targetFile != "" && scanOptions.target != "" {
+			return fmt.Errorf("--target and --target-file cannot be used together")
+		}
 
 		scanOptions.target = sanitizeTarget(scanOptions.target)
 
@@ -121,8 +140,10 @@ var scanCmd = &cobra.Command{
 			}
 		}
 
-		if err := validateTarget(scanOptions.target); err != nil {
-			return err
+		if scanOptions.target != "" {
+			if err := validateTarget(scanOptions.target); err != nil {
+				return err
+			}
 		}
 		if err := validateOutputMode(scanOptions.output); err != nil {
 			return err
@@ -143,8 +164,12 @@ var scanCmd = &cobra.Command{
 		}
 		diagnostics := buildScanDiagnostics(allowedSeverities, 0)
 
-		fmt.Fprintf(logOut, "%s target=%s severities=%s\n", style.TagScan, style.Target(scanOptions.target), style.Metric(strings.Join(allowedSeverities, ",")))
-		stopTicker := startScanTicker(logOut, scanOptions.target)
+		targetLabel := scanOptions.target
+		if targetLabel == "" {
+			targetLabel = "file:" + scanOptions.targetFile
+		}
+		fmt.Fprintf(logOut, "%s target=%s severities=%s\n", style.TagScan, style.Target(targetLabel), style.Metric(strings.Join(allowedSeverities, ",")))
+		stopTicker := startScanTicker(logOut, targetLabel)
 
 		runOptions := runner.Options{
 			TimeoutSeconds:            scanOptions.timeout,
@@ -169,6 +194,7 @@ var scanCmd = &cobra.Command{
 			ShowCommand:               scanOptions.showNucleiCommand,
 			LogWriter:                 logOut,
 			EnableCrawl:               scanOptions.crawl,
+			TargetsFile:               scanOptions.targetFile,
 		}
 		if scanOptions.brutalAggressive {
 			if scanOptions.concurrency == 0 {
@@ -244,8 +270,6 @@ var scanCmd = &cobra.Command{
 				aiStatus = "ok"
 				if aiErr != nil {
 					fmt.Fprintf(logOut, "%s AI unavailable: %v\n", style.TagWarn, aiErr)
-					analysis = ""
-					aiUsed = false
 					aiStatus = "unavailable"
 					aiError = aiErr.Error()
 				}
@@ -277,8 +301,6 @@ var scanCmd = &cobra.Command{
 				aiStatus = "ok"
 				if aiErr != nil {
 					fmt.Fprintf(logOut, "%s AI unavailable: %v\n", style.TagWarn, aiErr)
-					analysis = ""
-					aiUsed = false
 					aiStatus = "unavailable"
 					aiError = aiErr.Error()
 				}
@@ -286,7 +308,9 @@ var scanCmd = &cobra.Command{
 		}
 
 		validatedReport := validateAndFallbackAIOutput(analysis, findings)
-		if aiUsed && strings.TrimSpace(analysis) != "" && strings.TrimSpace(validatedReport) != strings.TrimSpace(analysis) {
+		if aiError != "" && len(findings) > 0 {
+			aiStatus = "fallback"
+		} else if aiUsed && strings.TrimSpace(analysis) != "" && strings.TrimSpace(validatedReport) != strings.TrimSpace(analysis) {
 			aiStatus = "fallback"
 		}
 
@@ -338,6 +362,7 @@ func init() {
 	rootCmd.AddCommand(scanCmd)
 
 	scanCmd.Flags().StringVarP(&scanOptions.target, "target", "t", "", "Target URL to scan (e.g. http://example.com)")
+	scanCmd.Flags().StringVarP(&scanOptions.targetFile, "target-file", "T", "", "File containing list of target URLs to scan (one per line)")
 	scanCmd.Flags().StringVar(&scanOptions.profile, "profile", "balanced", "Scan profile: fast, balanced, deep, web-full, benchmark-web, or brutal-aggressive")
 	scanCmd.Flags().StringVar(&scanOptions.focus, "focus", "", "Template focus preset: exposures, web-vulns, fuzz, misconfig, or cves")
 	scanCmd.Flags().StringVar(&scanOptions.severity, "severity", "medium,high,critical", "Severity levels to include")
@@ -392,8 +417,6 @@ func init() {
 	for _, flag := range advancedFlags {
 		_ = scanCmd.Flags().MarkHidden(flag)
 	}
-
-	_ = scanCmd.MarkFlagRequired("target")
 }
 
 func sanitizeTarget(raw string) string {
@@ -515,7 +538,7 @@ func applyScanProfile(cmd *cobra.Command) {
 		}
 	}
 	setIntIfUnset := func(flagName string, value int, target *int) {
-		if !cmd.Flags().Changed(flagName) {
+		if !cmd.Flags().Changed(flagName) && *target == 0 {
 			*target = value
 		}
 	}

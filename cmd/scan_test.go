@@ -367,6 +367,7 @@ func TestApplyScanProfile(t *testing.T) {
 
 func zeroScanOptions() struct {
 	target                    string
+	targetFile                string
 	severity                  string
 	profile                   string
 	focus                     string
@@ -405,6 +406,7 @@ func zeroScanOptions() struct {
 } {
 	return struct {
 		target                    string
+		targetFile                string
 		severity                  string
 		profile                   string
 		focus                     string
