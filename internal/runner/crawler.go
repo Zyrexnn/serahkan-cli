@@ -134,7 +134,7 @@ func executeCrawl(ctx context.Context, target string, domainScope string, crawlC
 		Concurrency:       crawlConcurrency,
 		Parallelism:       crawlConcurrency / 2,
 		Delay:             0,
-		RateLimit:         150,
+		RateLimit:         15,
 		Strategy:          "depth-first",
 		CustomHeaders:     katanaHeaders,
 		Headless:          useHeadless,
