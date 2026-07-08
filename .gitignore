@@ -1,7 +1,8 @@
 nuclei.exe
 serahkan
-serahkan-cli.exe
 serahkan.exe
+serahkan-lokal.exe
+serahkan-cli.exe
 report_*.html
 report_*.md
 config.yaml
