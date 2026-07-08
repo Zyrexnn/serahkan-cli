@@ -174,7 +174,6 @@ func ConfigYAMLPath() (string, error) {
 		if _, err := os.Stat(local); err == nil {
 			return local, nil
 		}
-		return local, nil
 	}
 
 	if home, err := os.UserHomeDir(); err == nil {
@@ -182,7 +181,6 @@ func ConfigYAMLPath() (string, error) {
 		if _, err := os.Stat(homePath); err == nil {
 			return homePath, nil
 		}
-		return homePath, nil
 	}
 
 	return "", fmt.Errorf("cannot determine config.yaml path")
