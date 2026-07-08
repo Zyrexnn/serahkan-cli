@@ -226,7 +226,7 @@ var scanCmd = &cobra.Command{
 		fmt.Fprintf(logOut, "%s raw=%s filtered=%s severity_skipped=%s waf_blocked=%s malformed=%s\n", style.TagFilter, style.Metric(fmt.Sprintf("%d", scanResult.RawFindings)), style.Metric(fmt.Sprintf("%d", len(findings))), style.Metric(fmt.Sprintf("%d", scanResult.FilteredBySeverity)), style.Metric(fmt.Sprintf("%d", scanResult.WAFBlocked)), style.Metric(fmt.Sprintf("%d", scanResult.MalformedLines)))
 
 		if len(findings) == 0 {
-			return emitNoFindings(out, scanOptions.target, allowedSeverities, scanOptions.output, time.Since(startedAt), scanResult, diagnostics)
+			return emitNoFindings(out, targetLabel, allowedSeverities, scanOptions.output, time.Since(startedAt), scanResult, diagnostics)
 		}
 
 		summary, err := formatFindingsSummary(findings, scanOptions.aiFindings)
@@ -315,10 +315,10 @@ var scanCmd = &cobra.Command{
 		}
 
 		if scanOptions.output == "json" {
-			return emitJSONReport(out, scanOptions.target, allowedSeverities, findings, strings.TrimSpace(validatedReport), aiUsed, aiStatus, aiError, time.Since(startedAt), scanResult, diagnostics)
+			return emitJSONReport(out, targetLabel, allowedSeverities, findings, strings.TrimSpace(validatedReport), aiUsed, aiStatus, aiError, time.Since(startedAt), scanResult, diagnostics)
 		}
 
-		style.PrintScanSummary(actualOut, scanOptions.target, len(findings), aiUsed, aiStatus, formatDuration(time.Since(startedAt)))
+		style.PrintScanSummary(actualOut, targetLabel, len(findings), aiUsed, aiStatus, formatDuration(time.Since(startedAt)))
 		if aiError != "" {
 			fmt.Fprintf(actualOut, "  %s  %s\n", style.Yellow.Sprint("AI Error:"), style.Warn(aiError))
 		}
@@ -328,7 +328,7 @@ var scanCmd = &cobra.Command{
 
 		if scanOptions.export != "" && exportBuf != nil {
 			reportData := exporter.ReportData{
-				Target:       scanOptions.target,
+				Target:       targetLabel,
 				Findings:     strings.TrimSpace(validatedReport),
 				AISummary:    exportBuf.String(),
 				ScanDuration: formatDuration(time.Since(startedAt)),

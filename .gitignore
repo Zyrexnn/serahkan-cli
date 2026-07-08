@@ -6,3 +6,5 @@ serahkan-cli.exe
 report_*.html
 report_*.md
 config.yaml
+target.txt
+targets.txt
