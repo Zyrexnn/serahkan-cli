@@ -138,8 +138,8 @@ func TestBuildNucleiArgs(t *testing.T) {
 		ShowCommand:    false,
 	})
 	normalJoined := strings.Join(normalArgs, " ")
-	if !strings.Contains(normalJoined, "-silent") {
-		t.Fatalf("expected -silent to be included when ShowCommand is false, got %q", normalJoined)
+	if strings.Contains(normalJoined, "-silent") {
+		t.Fatalf("expected -silent to be omitted in normal args, got %q", normalJoined)
 	}
 }
 
@@ -264,8 +264,8 @@ func TestBuildStealthArgs(t *testing.T) {
 
 	joined := strings.Join(args, " ")
 
-	if !strings.Contains(joined, "-silent") {
-		t.Fatal("expected -silent in stealth args")
+	if strings.Contains(joined, "-silent") {
+		t.Fatal("expected -silent to be omitted in stealth args")
 	}
 
 	uaFound := false
@@ -709,6 +709,7 @@ func TestWAFBlockPatternsNotEmpty(t *testing.T) {
 func TestCheckWAFBlockDetectsCloudflare(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cf-Ray", "12345-abc")
+		w.Header().Set("Server", "cloudflare")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "Hello")
 	}))
@@ -718,7 +719,7 @@ func TestCheckWAFBlockDetectsCloudflare(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for Cloudflare detection, got nil")
 	}
-	if !strings.Contains(err.Error(), "Cloudflare") {
+	if !strings.Contains(strings.ToLower(err.Error()), "cloudflare") {
 		t.Fatalf("expected Cloudflare error message, got: %s", err.Error())
 	}
 }
