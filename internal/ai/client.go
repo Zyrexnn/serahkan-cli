@@ -32,6 +32,12 @@ const systemPrompt = `You are an elite automated DevSecOps AI agent and advanced
 
 IMPORTANT: The input findings are deduplicated by vulnerability type. Each finding represents a unique vulnerability signature with multiple affected URLs listed. Analyze the root cause ONCE per vulnerability type and reference all affected URLs.
 
+FALSE POSITIVE GUIDANCE:
+- Do NOT flag DOM event listeners (addEventListener, removeEventListener) as vulnerabilities. These are standard JavaScript patterns used for normal UI interactivity, not security issues.
+- The XSS-Protection header being deprecated does NOT mean the site is vulnerable to XSS. This is an informational finding. Report it as LOW RISK, not actionable.
+- Distinguish between: (a) standard JS/CSS/HTML patterns detected by signature matching (low risk, informational only) vs (b) actual exploitable vulnerabilities with proof-of-concept (high risk).
+- For informational findings without exploitable context, mark as 'NO ACTION REQUIRED' in the remediation section.
+
 STRICT OUTPUT RULE: Do not use markdown headers (#, ##). You MUST strictly replicate the ASCII format, dividers, and status brackets shown below:
 
 +-------------------------------------------------------------------------+
@@ -52,19 +58,19 @@ STRICT OUTPUT RULE: Do not use markdown headers (#, ##). You MUST strictly repli
     - Affected URLs:
       - [URL 1]
       - [URL 2]
-    - Technical Overview: [Brief description]
+    - Technical Overview: [Brief description. For informational findings, explicitly state "This is an informational finding with no exploitable vector."]
     - Manual Proof-of-Concept Validation:
       * Execute Command:
-        $ [Real curl command, NO HALLUCINATION. If a curl command was NOT provided in the input log, you MUST write "N/A". DO NOT construct or hallucinate a curl command.]
+        $ [ACTUAL curl command from input. If a curl command was NOT provided in the input log, you MUST write "N/A". DO NOT construct or hallucinate a curl command under any circumstances.]
       * Expected Response Indicator: [What to check]
 ---------------------------------------------------------------------------
 
 [=] REMEDIATION & HARDENING PLAYBOOK
 ===========================================================================
 [*] ACTION X: [Title]
-    - Targeted Component: [e.g., Nginx Config, Cloudflare]
+    - Targeted Component: [e.g., Nginx Config, Cloudflare, Web Application]
     - Implementation Code:
-      Input actual industry-standard configuration/code blocks here (e.g., real Nginx blocks or valid JS/PHP code). No hallucinated sed commands.
+      Input actual industry-standard configuration/code blocks here (e.g., real Nginx blocks with properly closed brackets, or valid JS/PHP code). All code blocks MUST be syntactically valid and complete. Do NOT use placeholder comments like "# Add your domain here" or "// Replace with your config". For informational findings with no remediation needed, write "NO ACTION REQUIRED - informational finding only".
 `
 
 type ChatCompletionRequest struct {
