@@ -34,6 +34,10 @@ type Options struct {
 	Headers                   []string
 	Cookie                    string
 	CookieFile                string
+	LoginURL                  string
+	LoginData                 string
+	LoginThreshold            int
+	LoginCookieOutput         string
 	Tags                      []string
 	ExcludeTags               []string
 	Templates                 []string
@@ -43,6 +47,8 @@ type Options struct {
 	LogWriter                 io.Writer
 	TargetsFile               string
 	EnableCrawl               bool
+	SkipWAFCheck              bool
+	StrictWAFCheck            bool
 }
 
 type Result struct {
@@ -79,8 +85,13 @@ func RunNucleiScan(ctx context.Context, target string, allowedSeverities []strin
 		return RunNucleiDetailed(ctx, target, allowedSeverities, options)
 	}
 
-	if wafErr := checkWAFBlock(ctx, target, options.LogWriter); wafErr != nil {
-		return Result{}, wafErr
+	if !options.SkipWAFCheck {
+		if wafErr := checkWAFBlock(ctx, target, options.LogWriter); wafErr != nil {
+			if options.StrictWAFCheck {
+				return Result{}, wafErr
+			}
+			fmt.Fprintf(options.LogWriter, "[WARN] WAF/security precheck warning: %v; continuing scan\n", wafErr)
+		}
 	}
 
 	crawlResult, crawlErr := CrawlTarget(ctx, target, options.Concurrency, 2, options.LogWriter, options)
@@ -305,6 +316,10 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		args = append(args, "-H", "Cookie: "+cookie)
 	}
 
+	if loginCookie := strings.TrimSpace(options.LoginCookieOutput); loginCookie != "" && strings.TrimSpace(options.Cookie) == "" {
+		args = append(args, "-H", "Cookie: "+loginCookie)
+	}
+
 	if cookieFile := strings.TrimSpace(options.CookieFile); cookieFile != "" {
 		args = append(args, "-H", "@"+cookieFile)
 	}
@@ -422,15 +437,13 @@ var wafBlockPatterns = []string{
 	"enable javascript and cookies to continue",
 	"attention required",
 	"ray id:",
-	"cloudflare",
-	"incapsula",
-	"imperva",
-	"akamai",
 	"denied by security access",
 	"security block",
 	"request blocked",
 	"forbidden",
 }
+
+var wafVendorHeaders = []string{"cloudflare", "imperva", "incapsula", "akamai", "waf"}
 
 func checkWAFBlock(ctx context.Context, target string, logWriter io.Writer) error {
 	if logWriter == nil {
@@ -474,13 +487,11 @@ func checkWAFBlock(ctx context.Context, target string, logWriter io.Writer) erro
 	}
 
 	lowerHeaders := strings.ToLower(strings.Join(resp.Header.Values("Server"), " "))
-	if strings.Contains(lowerHeaders, "cloudflare") ||
-		strings.Contains(lowerHeaders, "imperva") ||
-		strings.Contains(lowerHeaders, "incapsula") ||
-		strings.Contains(lowerHeaders, "akamai") ||
-		strings.Contains(lowerHeaders, "waf") {
-		fmt.Fprintf(logWriter, "[BLOCKED] WAF/security server header detected on %s (server: %s)\n", target, lowerHeaders)
-		return fmt.Errorf("target %s appears to be behind a WAF/security filter (server header: %s)", target, lowerHeaders)
+	for _, vendor := range wafVendorHeaders {
+		if strings.Contains(lowerHeaders, vendor) {
+			fmt.Fprintf(logWriter, "[WARN] WAF/CDN server header detected on %s (server: %s)\n", target, lowerHeaders)
+			return nil
+		}
 	}
 
 	return nil

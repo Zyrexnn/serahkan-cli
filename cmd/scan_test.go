@@ -403,6 +403,13 @@ func zeroScanOptions() struct {
 	output                    string
 	export                    string
 	crawl                     bool
+	wafSkip                   bool
+	wafStrict                 bool
+	loginURL                  string
+	loginData                 string
+	loginDataFile             string
+	loginThreshold            int
+	loginCookies              string
 } {
 	return struct {
 		target                    string
@@ -442,6 +449,13 @@ func zeroScanOptions() struct {
 		output                    string
 		export                    string
 		crawl                     bool
+		wafSkip                   bool
+		wafStrict                 bool
+		loginURL                  string
+		loginData                 string
+		loginDataFile             string
+		loginThreshold            int
+		loginCookies              string
 	}{}
 }
 
@@ -453,7 +467,7 @@ func TestEmitNoFindingsJSON(t *testing.T) {
 	err := emitNoFindings(&buf, "http://example.com", []string{"high", "critical"}, "json", 3*time.Second, runner.Result{
 		RawFindings:        2,
 		FilteredBySeverity: 2,
-	}, []string{"low/info severity findings may be hidden"})
+	}, []string{"low/info severity findings may be hidden"}, "http://example.com")
 	if err != nil {
 		t.Fatalf("emitNoFindings() error = %v", err)
 	}

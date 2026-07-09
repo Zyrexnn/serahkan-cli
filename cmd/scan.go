@@ -40,6 +40,7 @@ var scanOptions struct {
 	forceTags                 []string
 	brutalAggressive          bool
 	benchmarkWeb              bool
+	webAuth                   bool
 	showNucleiCommand         bool
 	headers                   []string
 	cookie                    string
@@ -58,6 +59,13 @@ var scanOptions struct {
 	output                    string
 	export                    string
 	crawl                     bool
+	wafSkip                   bool
+	wafStrict                 bool
+	loginURL                  string
+	loginData                 string
+	loginDataFile             string
+	loginThreshold            int
+	loginCookies              string
 }
 
 var severityRank = map[string]int{
@@ -157,6 +165,31 @@ var scanCmd = &cobra.Command{
 			return err
 		}
 
+		loginURL := scanOptions.loginURL
+		if loginURL == "" && scanOptions.target != "" {
+			loginURL = scanOptions.target
+		}
+
+		loginData := strings.TrimSpace(scanOptions.loginData)
+		if loginData == "" && scanOptions.loginDataFile != "" {
+			data, readErr := os.ReadFile(scanOptions.loginDataFile)
+			if readErr == nil {
+				loginData = strings.TrimSpace(string(data))
+			}
+		}
+
+		if loginData != "" && loginURL != "" {
+			loginResult, loginErr := runner.AttemptLogin(cmd.Context(), loginURL, loginData, scanOptions.loginThreshold, logOut)
+			if loginErr == nil && loginResult.Success {
+				scanOptions.loginCookies = loginResult.Cookies
+				fmt.Fprintf(logOut, "%s authenticated via login form\n", style.TagOK)
+			} else if loginErr != nil {
+				fmt.Fprintf(logOut, "%s login failed: %v\n", style.TagWarn, loginErr)
+			} else {
+				fmt.Fprintf(logOut, "%s login unsuccessful (status=%d), proceeding unauthenticated\n", style.TagWarn, loginResult.StatusCode)
+			}
+		}
+
 		allowedSeverities := parseSeverityFlag(scanOptions.severity)
 		if cmd.Flags().Changed("ai-endpoint") {
 			allowedSeverities = []string{"info", "low", "medium", "high", "critical"}
@@ -185,6 +218,7 @@ var scanCmd = &cobra.Command{
 			Headers:                   scanOptions.headers,
 			Cookie:                    scanOptions.cookie,
 			CookieFile:                scanOptions.cookieFile,
+			LoginCookieOutput:         scanOptions.loginCookies,
 			Tags:                      scanOptions.tags,
 			ExcludeTags:               scanOptions.excludeTags,
 			Templates:                 scanOptions.templates,
@@ -194,6 +228,8 @@ var scanCmd = &cobra.Command{
 			LogWriter:                 logOut,
 			EnableCrawl:               scanOptions.crawl,
 			TargetsFile:               scanOptions.targetFile,
+			SkipWAFCheck:              scanOptions.wafSkip,
+			StrictWAFCheck:            scanOptions.wafStrict,
 		}
 		if scanOptions.brutalAggressive {
 			if scanOptions.concurrency == 0 {
@@ -234,7 +270,7 @@ var scanCmd = &cobra.Command{
 					fmt.Fprintf(exportBuf, "  - %s\n", reason)
 				}
 			}
-			return emitNoFindings(out, targetLabel, allowedSeverities, scanOptions.output, time.Since(startedAt), scanResult, diagnostics)
+			return emitNoFindings(out, targetLabel, allowedSeverities, scanOptions.output, time.Since(startedAt), scanResult, diagnostics, targetLabel)
 		}
 
 		summary, err := formatFindingsSummary(findings, scanOptions.aiFindings)
@@ -438,6 +474,17 @@ func init() {
 	scanCmd.Flags().StringVar(&scanOptions.output, "output", "text", "Output format: text or json")
 	scanCmd.Flags().StringVar(&scanOptions.export, "export", "", "Export report to file: html or markdown")
 	scanCmd.Flags().BoolVar(&scanOptions.crawl, "crawl", false, "Enable Katana crawler to discover additional sub-pages before scanning")
+	scanCmd.Flags().BoolVar(&scanOptions.wafSkip, "waf-skip", false, "Skip crawl pre-flight WAF/CDN check")
+	scanCmd.Flags().BoolVar(&scanOptions.wafStrict, "waf-strict", false, "Abort crawl scans when WAF/security block patterns are detected")
+
+	scanCmd.Flags().StringVar(&scanOptions.loginURL, "login-url", "", "Login form action URL (default: same as --target)")
+	scanCmd.Flags().StringVar(&scanOptions.loginData, "login-data", "", "POST body for login (e.g. username=admin\u0026password=pass)")
+	scanCmd.Flags().StringVar(&scanOptions.loginDataFile, "login-data-file", "", "File containing login POST body (alternative to --login-data)")
+	scanCmd.Flags().IntVar(&scanOptions.loginThreshold, "login-threshold", 0, "HTTP status code indicating login success (0=auto: 200 or 302)")
+
+	for _, flag := range []string{"waf-skip", "waf-strict", "login-url", "login-data", "login-data-file", "login-threshold"} {
+		_ = scanCmd.Flags().MarkHidden(flag)
+	}
 
 	advancedFlags := []string{
 		"concurrency",
@@ -643,6 +690,21 @@ func applyScanProfile(cmd *cobra.Command) {
 		setBoolIfUnset("enable-dast", false, &scanOptions.enableDAST)
 		setSliceIfUnset("protocols", []string{"http"}, &scanOptions.protocols)
 		setIntIfUnset("ai-findings", 20, &scanOptions.aiFindings)
+	case "web-auth":
+		scanOptions.webAuth = true
+		setStringIfUnset("severity", "info,low,medium,high,critical", &scanOptions.severity)
+		setStringIfUnset("focus", "web-vulns", &scanOptions.focus)
+		setIntIfUnset("timeout", 30, &scanOptions.timeout)
+		setIntIfUnset("max-duration", 420, &scanOptions.maxDuration)
+		setIntIfUnset("retries", 2, &scanOptions.retries)
+		setBoolIfUnset("interactsh", true, &scanOptions.interactsh)
+		setBoolIfUnset("skip-ai", false, &scanOptions.skipAI)
+		setBoolIfUnset("raw-http", true, &scanOptions.rawHTTP)
+		setBoolIfUnset("enable-headless", true, &scanOptions.enableHeadless)
+		setBoolIfUnset("enable-dast", true, &scanOptions.enableDAST)
+		setSliceIfUnset("protocols", []string{"http", "headless", "javascript"}, &scanOptions.protocols)
+		setIntIfUnset("ai-timeout", 120, &scanOptions.aiTimeout)
+		setIntIfUnset("ai-findings", 15, &scanOptions.aiFindings)
 	case "brutal-aggressive":
 		scanOptions.brutalAggressive = true
 		setStringIfUnset("severity", "info,low,medium,high,critical", &scanOptions.severity)
@@ -714,6 +776,11 @@ func emitNoFindings(out io.Writer, target string, severities []string, mode stri
 	for _, reason := range diagnostics {
 		fmt.Fprintf(out, "  %s %s\n", style.DimWhite.Sprint("-"), style.Dim(reason))
 	}
+	if scanOptions.loginCookies == "" && scanOptions.cookie == "" && scanOptions.cookieFile == "" && len(scanOptions.headers) == 0 && scanResult.RawFindings == 0 {
+		if targetLabel != "" && runner.IsLoginPage(targetLabel) {
+			fmt.Fprintf(out, "  %s %s\n", style.DimWhite.Sprint("*"), style.Dim("target appears to be a login page; use --login-data or --cookie for authenticated scanning"))
+		}
+	}
 	fmt.Fprintln(out)
 	return nil
 }
@@ -761,8 +828,8 @@ func buildScanDiagnostics(severities []string, wafBlocked int) []string {
 	if !scanOptions.enableDAST {
 		reasons = append(reasons, "DAST/fuzz templates are disabled; use --enable-dast for parameter fuzzing")
 	}
-	if len(scanOptions.headers) == 0 && scanOptions.cookie == "" && scanOptions.cookieFile == "" {
-		reasons = append(reasons, "scan is unauthenticated; use --header, --cookie, or --cookie-file for login-only apps")
+	if len(scanOptions.headers) == 0 && scanOptions.cookie == "" && scanOptions.cookieFile == "" && scanOptions.loginCookies == "" {
+		reasons = append(reasons, "scan is unauthenticated; use --header, --cookie, --cookie-file, or --login-data for login-only apps")
 	}
 	if len(scanOptions.forceTags) == 0 {
 		reasons = append(reasons, "Nuclei default ignored tags such as fuzz/bruteforce remain excluded")
@@ -773,11 +840,17 @@ func buildScanDiagnostics(severities []string, wafBlocked int) []string {
 	if scanOptions.benchmarkWeb {
 		reasons = append(reasons, "benchmark-web mode is active for public vulnerable demo targets and web vulnerability templates")
 	}
+	if scanOptions.webAuth {
+		reasons = append(reasons, "web-auth profile active for authenticated scanning of login-protected targets")
+	}
 	if focus := strings.TrimSpace(scanOptions.focus); focus != "" {
 		reasons = append(reasons, fmt.Sprintf("focus preset %q is active", focus))
 	}
 	if scanOptions.maxDuration > 0 {
 		reasons = append(reasons, fmt.Sprintf("Nuclei scan phase is capped at %ds", scanOptions.maxDuration))
+	}
+	if scanOptions.loginCookies != "" {
+		reasons = append(reasons, "authenticated via login form")
 	}
 	if wafBlocked > 0 {
 		reasons = append(reasons, fmt.Sprintf("%d finding(s) blocked by WAF/security filter and excluded from results", wafBlocked))

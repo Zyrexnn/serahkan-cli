@@ -716,11 +716,8 @@ func TestCheckWAFBlockDetectsCloudflare(t *testing.T) {
 	defer server.Close()
 
 	err := checkWAFBlock(context.Background(), server.URL, nil)
-	if err == nil {
-		t.Fatal("expected error for Cloudflare detection, got nil")
-	}
-	if !strings.Contains(strings.ToLower(err.Error()), "cloudflare") {
-		t.Fatalf("expected Cloudflare error message, got: %s", err.Error())
+	if err != nil {
+		t.Fatalf("expected nil error for Cloudflare CDN header, got: %v", err)
 	}
 }
 
