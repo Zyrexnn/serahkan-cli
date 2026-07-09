@@ -161,6 +161,29 @@ func executeCrawl(ctx context.Context, target string, domainScope string, crawlC
 			crawledURLs = append(crawledURLs, reqURL)
 			mu.Unlock()
 			atomic.AddInt64(&urlCount, 1)
+
+			if result.Response.Body != "" {
+				action := extractFormAction(result.Response.Body)
+				if action != "" {
+					formURL, parseErr := url.Parse(action)
+					if parseErr == nil {
+						if !formURL.IsAbs() {
+							base, _ := url.Parse(reqURL)
+							if base != nil {
+								formURL = base.ResolveReference(formURL)
+							}
+						}
+						fullURL := formURL.String()
+						if fullURL != reqURL {
+							mu.Lock()
+							crawledURLs = append(crawledURLs, fullURL)
+							mu.Unlock()
+							atomic.AddInt64(&urlCount, 1)
+							fmt.Fprintf(logWriter, "\r%s form_action=%s\n", "[CRAWL]", fullURL)
+						}
+					}
+				}
+			}
 		},
 	}
 
