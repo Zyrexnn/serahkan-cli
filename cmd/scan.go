@@ -1,4 +1,4 @@
-	package cmd
+package cmd
 
 import (
 	"context"
@@ -21,51 +21,52 @@ import (
 )
 
 var scanOptions struct {
-	target                    string
-	targetFile                string
-	severity                  string
-	profile                   string
-	focus                     string
-	timeout                   int
-	maxDuration               int
-	retries                   int
-	concurrency               int
-	rateLimit                 int
-	verbose                   bool
-	interactsh                bool
-	rawHTTP                   bool
-	enableHeadless            bool
-	enableDAST                bool
-	techDetect                bool
-	forceTags                 []string
-	brutalAggressive          bool
-	benchmarkWeb              bool
-	webAuth                   bool
-	showNucleiCommand         bool
-	headers                   []string
-	cookie                    string
-	cookieFile                string
-	tags                      []string
-	excludeTags               []string
-	templates                 []string
-	workflows                 []string
-	protocols                 []string
-	skipAI                    bool
-	aiEndpoint                string
-	aiModel                   string
-	aiApiKey                  string
-	aiTimeout                 int
-	aiFindings                int
-	output                    string
-	export                    string
-	crawl                     bool
-	wafSkip                   bool
-	wafStrict                 bool
-	loginURL                  string
-	loginData                 string
-	loginDataFile             string
-	loginThreshold            int
-	loginCookies              string
+	target            string
+	targetFile        string
+	severity          string
+	profile           string
+	focus             string
+	timeout           int
+	maxDuration       int
+	retries           int
+	concurrency       int
+	rateLimit         int
+	verbose           bool
+	interactsh        bool
+	rawHTTP           bool
+	enableHeadless    bool
+	enableDAST        bool
+	techDetect        bool
+	forceTags         []string
+	brutalAggressive  bool
+	benchmarkWeb      bool
+	webAuth           bool
+	showNucleiCommand bool
+	headers           []string
+	cookie            string
+	cookieFile        string
+	tags              []string
+	excludeTags       []string
+	templates         []string
+	workflows         []string
+	protocols         []string
+	skipAI            bool
+	aiEndpoint        string
+	aiModel           string
+	aiApiKey          string
+	aiTimeout         int
+	aiFindings        int
+	output            string
+	export            string
+	crawl             bool
+	wafSkip           bool
+	wafStrict         bool
+	loginURL          string
+	loginData         string
+	loginDataFile     string
+	loginThreshold    int
+	loginCookies      string
+	proxy             string
 }
 
 var severityRank = map[string]int{
@@ -108,12 +109,12 @@ var scanCmd = &cobra.Command{
 		logOut := cmd.ErrOrStderr()
 		startedAt := time.Now()
 
-	var exportBuf *strings.Builder
-	var actualOut io.Writer = out
-	if scanOptions.export != "" {
-		exportBuf = &strings.Builder{}
-		actualOut = out
-	}
+		var exportBuf *strings.Builder
+		var actualOut io.Writer = out
+		if scanOptions.export != "" {
+			exportBuf = &strings.Builder{}
+			actualOut = out
+		}
 
 		applyScanConfigDefaults(cmd)
 		applyScanProfile(cmd)
@@ -204,32 +205,33 @@ var scanCmd = &cobra.Command{
 		stopTicker := startScanTicker(logOut, targetLabel)
 
 		runOptions := runner.Options{
-			TimeoutSeconds:            scanOptions.timeout,
-			Retries:                   scanOptions.retries,
-			Verbose:                   scanOptions.verbose,
-			NoInteractsh:              !scanOptions.interactsh,
-			Concurrency:               scanOptions.concurrency,
-			RateLimit:                 scanOptions.rateLimit,
-			RawHTTP:                   scanOptions.rawHTTP,
-			EnableHeadless:            scanOptions.enableHeadless,
-			EnableDAST:                scanOptions.enableDAST,
-			TechDetect:                scanOptions.techDetect,
-			ForceTags:                 scanOptions.forceTags,
-			Headers:                   scanOptions.headers,
-			Cookie:                    scanOptions.cookie,
-			CookieFile:                scanOptions.cookieFile,
-			LoginCookieOutput:         scanOptions.loginCookies,
-			Tags:                      scanOptions.tags,
-			ExcludeTags:               scanOptions.excludeTags,
-			Templates:                 scanOptions.templates,
-			Workflows:                 scanOptions.workflows,
-			Protocols:                 scanOptions.protocols,
-			ShowCommand:               scanOptions.showNucleiCommand,
-			LogWriter:                 logOut,
-			EnableCrawl:               scanOptions.crawl,
-			TargetsFile:               scanOptions.targetFile,
-			SkipWAFCheck:              scanOptions.wafSkip,
-			StrictWAFCheck:            scanOptions.wafStrict,
+			TimeoutSeconds:    scanOptions.timeout,
+			Retries:           scanOptions.retries,
+			Verbose:           scanOptions.verbose,
+			NoInteractsh:      !scanOptions.interactsh,
+			Concurrency:       scanOptions.concurrency,
+			RateLimit:         scanOptions.rateLimit,
+			RawHTTP:           scanOptions.rawHTTP,
+			EnableHeadless:    scanOptions.enableHeadless,
+			EnableDAST:        scanOptions.enableDAST,
+			TechDetect:        scanOptions.techDetect,
+			ForceTags:         scanOptions.forceTags,
+			Headers:           scanOptions.headers,
+			Cookie:            scanOptions.cookie,
+			CookieFile:        scanOptions.cookieFile,
+			LoginCookieOutput: scanOptions.loginCookies,
+			Tags:              scanOptions.tags,
+			ExcludeTags:       scanOptions.excludeTags,
+			Templates:         scanOptions.templates,
+			Workflows:         scanOptions.workflows,
+			Protocols:         scanOptions.protocols,
+			ShowCommand:       scanOptions.showNucleiCommand,
+			LogWriter:         logOut,
+			EnableCrawl:       scanOptions.crawl,
+			TargetsFile:       scanOptions.targetFile,
+			SkipWAFCheck:      scanOptions.wafSkip,
+			StrictWAFCheck:    scanOptions.wafStrict,
+			Proxy:             scanOptions.proxy,
 		}
 		if scanOptions.brutalAggressive {
 			if scanOptions.concurrency == 0 {
@@ -252,7 +254,8 @@ var scanCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("scan failed: %w", err)
 		}
-		findings := scanResult.Findings
+		allFindings := scanResult.Findings
+		findings := allFindings
 
 		if scanResult.WAFBlocked > 0 {
 			diagnostics = buildScanDiagnostics(allowedSeverities, scanResult.WAFBlocked)
@@ -423,6 +426,8 @@ var scanCmd = &cobra.Command{
 				savedPath, exportErr = exporter.ExportHTML(reportData)
 			case "markdown":
 				savedPath, exportErr = exporter.ExportMarkdown(reportData)
+			case "sarif":
+				savedPath, exportErr = exporter.ExportSarif(allFindings, targetLabel, Version)
 			}
 
 			if exportErr != nil {
@@ -441,7 +446,7 @@ func init() {
 
 	scanCmd.Flags().StringVarP(&scanOptions.target, "target", "t", "", "Target URL to scan (e.g. http://example.com)")
 	scanCmd.Flags().StringVarP(&scanOptions.targetFile, "target-file", "T", "", "File containing list of target URLs to scan (one per line)")
-	scanCmd.Flags().StringVar(&scanOptions.profile, "profile", "balanced", "Scan profile: fast, balanced, deep, web-full, benchmark-web, or brutal-aggressive")
+	scanCmd.Flags().StringVar(&scanOptions.profile, "profile", "balanced", "Scan profile: fast, balanced, deep, web-full, benchmark-web, stealth, or brutal-aggressive")
 	scanCmd.Flags().StringVar(&scanOptions.focus, "focus", "", "Template focus preset: exposures, web-vulns, fuzz, misconfig, or cves")
 	scanCmd.Flags().StringVar(&scanOptions.severity, "severity", "medium,high,critical", "Severity levels to include")
 	scanCmd.Flags().IntVar(&scanOptions.timeout, "timeout", 10, "Timeout in seconds per Nuclei HTTP request")
@@ -474,6 +479,7 @@ func init() {
 	scanCmd.Flags().StringVar(&scanOptions.output, "output", "text", "Output format: text or json")
 	scanCmd.Flags().StringVar(&scanOptions.export, "export", "", "Export report to file: html or markdown")
 	scanCmd.Flags().BoolVar(&scanOptions.crawl, "crawl", false, "Enable Katana crawler to discover additional sub-pages before scanning")
+	scanCmd.Flags().StringVar(&scanOptions.proxy, "proxy", "", "HTTP / SOCKS5 proxy for all requests (e.g. http://127.0.0.1:8080)")
 	scanCmd.Flags().BoolVar(&scanOptions.wafSkip, "waf-skip", false, "Skip crawl pre-flight WAF/CDN check")
 	scanCmd.Flags().BoolVar(&scanOptions.wafStrict, "waf-strict", false, "Abort crawl scans when WAF/security block patterns are detected")
 
@@ -566,10 +572,10 @@ func validateOutputMode(value string) error {
 
 func validateScanProfile(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "fast", "balanced", "deep", "web-full", "benchmark-web", "web-auth", "brutal-aggressive":
+	case "fast", "balanced", "deep", "web-full", "benchmark-web", "web-auth", "stealth", "brutal-aggressive":
 		return nil
 	default:
-		return fmt.Errorf("invalid scan profile %q. Supported values: fast, balanced, deep, web-full, benchmark-web, brutal-aggressive", value)
+		return fmt.Errorf("invalid scan profile %q. Supported values: fast, balanced, deep, web-full, benchmark-web, stealth, brutal-aggressive", value)
 	}
 }
 
@@ -584,10 +590,10 @@ func validateFocus(value string) error {
 
 func validateExportMode(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "html", "markdown":
+	case "", "html", "markdown", "sarif":
 		return nil
 	default:
-		return fmt.Errorf("invalid export mode %q. Supported values: html, markdown", value)
+		return fmt.Errorf("invalid export mode %q. Supported values: html, markdown, sarif", value)
 	}
 }
 
@@ -719,6 +725,18 @@ func applyScanProfile(cmd *cobra.Command) {
 		setSliceIfUnset("force-tags", []string{"cve", "sqli", "xss", "lfi", "rce", "misconfig", "exposure"}, &scanOptions.forceTags)
 		setSliceIfUnset("protocols", []string{"http", "headless", "javascript", "dns"}, &scanOptions.protocols)
 		setIntIfUnset("ai-findings", 25, &scanOptions.aiFindings)
+	case "stealth":
+		setStringIfUnset("severity", "medium,high,critical", &scanOptions.severity)
+		setIntIfUnset("timeout", 20, &scanOptions.timeout)
+		setIntIfUnset("max-duration", 180, &scanOptions.maxDuration)
+		setIntIfUnset("retries", 1, &scanOptions.retries)
+		setIntIfUnset("rate-limit", 5, &scanOptions.rateLimit)
+		setIntIfUnset("concurrency", 10, &scanOptions.concurrency)
+		setBoolIfUnset("skip-ai", false, &scanOptions.skipAI)
+		setStringIfUnset("export", "html", &scanOptions.export)
+		setSliceIfUnset("protocols", []string{"http"}, &scanOptions.protocols)
+		setIntIfUnset("ai-timeout", 25, &scanOptions.aiTimeout)
+		setIntIfUnset("ai-findings", 5, &scanOptions.aiFindings)
 	default:
 		setStringIfUnset("severity", "medium,high,critical", &scanOptions.severity)
 		setIntIfUnset("timeout", 10, &scanOptions.timeout)
@@ -888,22 +906,22 @@ func authMode() string {
 
 func nucleiExecution(scanResult runner.Result) map[string]interface{} {
 	execution := map[string]interface{}{
-		"tech_detect":                  scanOptions.techDetect,
-		"raw_http":                     scanOptions.rawHTTP,
-		"headless":                     scanOptions.enableHeadless,
-		"dast":                         scanOptions.enableDAST,
-		"oob":                          scanOptions.interactsh,
-		"protocols":                    scanOptions.protocols,
-		"tags":                         scanOptions.tags,
-		"exclude_tags":                 scanOptions.excludeTags,
-		"templates":                    scanOptions.templates,
-		"workflows":                    scanOptions.workflows,
-		"force_tags":                   scanOptions.forceTags,
-		"concurrency":                  scanOptions.concurrency,
-		"rate_limit":                   scanOptions.rateLimit,
-		"total_lines":                  scanResult.TotalLines,
-		"malformed_lines":              scanResult.MalformedLines,
-		"waf_blocked":                  scanResult.WAFBlocked,
+		"tech_detect":     scanOptions.techDetect,
+		"raw_http":        scanOptions.rawHTTP,
+		"headless":        scanOptions.enableHeadless,
+		"dast":            scanOptions.enableDAST,
+		"oob":             scanOptions.interactsh,
+		"protocols":       scanOptions.protocols,
+		"tags":            scanOptions.tags,
+		"exclude_tags":    scanOptions.excludeTags,
+		"templates":       scanOptions.templates,
+		"workflows":       scanOptions.workflows,
+		"force_tags":      scanOptions.forceTags,
+		"concurrency":     scanOptions.concurrency,
+		"rate_limit":      scanOptions.rateLimit,
+		"total_lines":     scanResult.TotalLines,
+		"malformed_lines": scanResult.MalformedLines,
+		"waf_blocked":     scanResult.WAFBlocked,
 	}
 	if scanResult.Stderr != "" {
 		execution["stderr"] = scanResult.Stderr
