@@ -566,7 +566,7 @@ func validateOutputMode(value string) error {
 
 func validateScanProfile(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "fast", "balanced", "deep", "web-full", "benchmark-web", "brutal-aggressive":
+	case "fast", "balanced", "deep", "web-full", "benchmark-web", "web-auth", "brutal-aggressive":
 		return nil
 	default:
 		return fmt.Errorf("invalid scan profile %q. Supported values: fast, balanced, deep, web-full, benchmark-web, brutal-aggressive", value)
@@ -766,7 +766,7 @@ func appendSliceIfUnset(cmd *cobra.Command, flagName string, values []string, ta
 	}
 }
 
-func emitNoFindings(out io.Writer, target string, severities []string, mode string, duration time.Duration, scanResult runner.Result, diagnostics []string) error {
+func emitNoFindings(out io.Writer, target string, severities []string, mode string, duration time.Duration, scanResult runner.Result, diagnostics []string, targetLabel string) error {
 	if mode == "json" {
 		return emitJSONReport(out, target, severities, []parser.NucleiFinding{}, "", false, "not_used", "", duration, scanResult, diagnostics)
 	}
@@ -859,6 +859,9 @@ func buildScanDiagnostics(severities []string, wafBlocked int) []string {
 }
 
 func authMode() string {
+	if scanOptions.loginCookies != "" {
+		return "login_form"
+	}
 	hasHeader := len(scanOptions.headers) > 0
 	hasCookie := strings.TrimSpace(scanOptions.cookie) != ""
 	hasCookieFile := strings.TrimSpace(scanOptions.cookieFile) != ""

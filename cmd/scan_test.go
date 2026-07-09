@@ -147,6 +147,7 @@ func TestValidateScanProfile(t *testing.T) {
 		{input: "deep", wantErr: false},
 		{input: "web-full", wantErr: false},
 		{input: "benchmark-web", wantErr: false},
+		{input: "web-auth", wantErr: false},
 		{input: "brutal-aggressive", wantErr: false},
 		{input: "turbo", wantErr: true},
 	}
@@ -385,6 +386,7 @@ func zeroScanOptions() struct {
 	forceTags                 []string
 	brutalAggressive          bool
 	benchmarkWeb              bool
+	webAuth                   bool
 	showNucleiCommand         bool
 	headers                   []string
 	cookie                    string
@@ -431,6 +433,7 @@ func zeroScanOptions() struct {
 		forceTags                 []string
 		brutalAggressive          bool
 		benchmarkWeb              bool
+		webAuth                   bool
 		showNucleiCommand         bool
 		headers                   []string
 		cookie                    string
