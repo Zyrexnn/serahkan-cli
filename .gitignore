@@ -3,6 +3,9 @@ serahkan
 serahkan.exe
 serahkan-lokal.exe
 serahkan-cli.exe
+*.test
+*.out
+coverage.txt
 report_*.html
 report_*.md
 config.yaml
