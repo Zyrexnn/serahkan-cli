@@ -580,7 +580,7 @@ func applyScanProfile(cmd *cobra.Command) {
 		}
 	}
 	setIntIfUnset := func(flagName string, value int, target *int) {
-		if !cmd.Flags().Changed(flagName) && *target == 0 {
+		if !cmd.Flags().Changed(flagName) {
 			*target = value
 		}
 	}
