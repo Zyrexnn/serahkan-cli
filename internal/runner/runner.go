@@ -20,35 +20,36 @@ import (
 )
 
 type Options struct {
-	TimeoutSeconds            int
-	Retries                   int
-	Verbose                   bool
-	NoInteractsh              bool
-	Concurrency               int
-	RateLimit                 int
-	RawHTTP                   bool
-	EnableHeadless            bool
-	EnableDAST                bool
-	TechDetect                bool
-	ForceTags                 []string
-	Headers                   []string
-	Cookie                    string
-	CookieFile                string
-	LoginURL                  string
-	LoginData                 string
-	LoginThreshold            int
-	LoginCookieOutput         string
-	Tags                      []string
-	ExcludeTags               []string
-	Templates                 []string
-	Workflows                 []string
-	Protocols                 []string
-	ShowCommand               bool
-	LogWriter                 io.Writer
-	TargetsFile               string
-	EnableCrawl               bool
-	SkipWAFCheck              bool
-	StrictWAFCheck            bool
+	TimeoutSeconds    int
+	Retries           int
+	Verbose           bool
+	NoInteractsh      bool
+	Concurrency       int
+	RateLimit         int
+	RawHTTP           bool
+	EnableHeadless    bool
+	EnableDAST        bool
+	TechDetect        bool
+	ForceTags         []string
+	Headers           []string
+	Cookie            string
+	CookieFile        string
+	LoginURL          string
+	LoginData         string
+	LoginThreshold    int
+	LoginCookieOutput string
+	Tags              []string
+	ExcludeTags       []string
+	Templates         []string
+	Workflows         []string
+	Protocols         []string
+	ShowCommand       bool
+	LogWriter         io.Writer
+	TargetsFile       string
+	EnableCrawl       bool
+	SkipWAFCheck      bool
+	StrictWAFCheck    bool
+	Proxy             string
 }
 
 type Result struct {
@@ -344,6 +345,10 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		args = append(args, "-type", protocols)
 	}
 
+	if proxy := strings.TrimSpace(options.Proxy); proxy != "" {
+		args = append(args, "-p", proxy)
+	}
+
 	return args
 }
 
@@ -409,13 +414,58 @@ func ResolveNucleiPath() (string, error) {
 	nucleiPath, err := exec.LookPath("nuclei")
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
-			return "", fmt.Errorf("nuclei is not installed or not available in PATH")
+			return "", nucleiMissingError()
 		}
 
 		return "", fmt.Errorf("failed to locate nuclei: %w", err)
 	}
 
 	return nucleiPath, nil
+}
+
+func nucleiMissingError() error {
+	base := "nuclei binary not found (checked ./nuclei.exe and PATH)"
+
+	if runtime.GOOS == "windows" {
+		root, _ := os.Getwd()
+		base += fmt.Sprintf("\n\nWindows: Windows Defender may quarantine Nuclei as HackTool/PUA, so it disappears after download."+
+			"\n  Whitelist this folder first (run as Administrator):"+
+			"\n    Add-MpPreference -ExclusionPath \"%s\""+
+			"\n  Then place nuclei.exe next to serahkan.exe, or run:"+
+			"\n    go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", root)
+	} else {
+		base += "\n\nInstall: go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest" +
+			"\nOr place the nuclei binary in your PATH."
+	}
+
+	return fmt.Errorf("%s", base)
+}
+
+func ResolveNucleiVersion() (string, error) {
+	nucleiPath, err := ResolveNucleiPath()
+	if err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command(nucleiPath, "-version")
+	stderr, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to determine nuclei version: %w", err)
+	}
+
+	for _, line := range strings.Split(string(stderr), "\n") {
+		if strings.Contains(line, "Nuclei Engine Version:") {
+			parts := strings.Split(line, "v")
+			if len(parts) >= 2 {
+				version := strings.TrimSpace(strings.Split(parts[1], " ")[0])
+				if version != "" {
+					return version, nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("unable to parse nuclei version from output: %s", string(stderr))
 }
 
 func localNucleiCandidates() []string {

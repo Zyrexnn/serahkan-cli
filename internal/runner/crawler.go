@@ -129,6 +129,7 @@ func executeCrawl(ctx context.Context, target string, domainScope string, crawlC
 	katanaOptions := &types.Options{
 		MaxDepth:          maxDepth,
 		FieldScope:        "rdn",
+		Proxy:             opts.Proxy,
 		BodyReadSize:      math.MaxInt,
 		Timeout:           20,
 		Concurrency:       crawlConcurrency,

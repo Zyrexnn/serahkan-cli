@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -303,6 +302,9 @@ func TestBuildStealthArgsBrutalAppliesJitter(t *testing.T) {
 	if !strings.Contains(joined, "-rl ") {
 		t.Fatal("expected -rl in brutal stealth args")
 	}
+	if strings.Contains(joined, "(+jitter~") {
+		t.Fatal("expected stealth args to keep nuclei flag values numeric")
+	}
 }
 
 func TestHasNucleiFingerprint(t *testing.T) {
@@ -370,42 +372,6 @@ func TestUserAgentListCoverage(t *testing.T) {
 	}
 	if !hasIOS {
 		t.Fatal("expected iOS User-Agent")
-	}
-}
-
-func TestJitterMicroDelay(t *testing.T) {
-	args := []string{"-target", "http://x.com", "-rl", "500", "-c", "150"}
-	result := jitterMicroDelay(args)
-
-	rlIdx := -1
-	for i, arg := range result {
-		if arg == "-rl" {
-			rlIdx = i
-			break
-		}
-	}
-	if rlIdx < 0 || rlIdx+1 >= len(result) {
-		t.Fatal("expected -rl flag in result")
-	}
-
-	rlVal := result[rlIdx+1]
-	if !strings.Contains(rlVal, "(+jitter~") {
-		t.Fatalf("expected jitter annotation in rl value, got: %s", rlVal)
-	}
-
-	parts := strings.Split(rlVal, "(+jitter~")
-	numericPart := strings.TrimSuffix(strings.TrimSuffix(parts[1], ")"), "ms")
-	delay, err := strconv.Atoi(numericPart)
-	if err != nil {
-		t.Fatalf("expected numeric jitter delay, got: %s, err: %v", numericPart, err)
-	}
-	if delay < 50 || delay > 199 {
-		t.Fatalf("expected jitter delay between 50-199, got: %d", delay)
-	}
-
-	baseVal, _ := strconv.Atoi(parts[0])
-	if baseVal != 500 {
-		t.Fatalf("expected base rl value 500, got: %d", baseVal)
 	}
 }
 
@@ -506,6 +472,32 @@ func TestBuildNucleiArgsWithTargetsFile(t *testing.T) {
 	}
 	if !listFound {
 		t.Fatalf("expected -list with targets file path, got: %s", strings.Join(args, " "))
+	}
+}
+
+func TestBuildNucleiArgsWithProxy(t *testing.T) {
+	nucleiFlagSupportMu.Lock()
+	nucleiFlagSupport["/tmp/nuclei"] = map[string]bool{"-no-banner": true}
+	nucleiFlagSupportMu.Unlock()
+
+	args := buildNucleiArgs("/tmp/nuclei", "https://example.com", []string{"high"}, Options{
+		TimeoutSeconds: 10,
+		Retries:        0,
+		Proxy:          "http://127.0.0.1:8080",
+	})
+
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-p http://127.0.0.1:8080") {
+		t.Fatalf("expected proxy flag -p in args, got: %s", joined)
+	}
+
+	argsNoProxy := buildNucleiArgs("/tmp/nuclei", "https://example.com", []string{"high"}, Options{
+		TimeoutSeconds: 10,
+		Retries:        0,
+	})
+	noJoined := strings.Join(argsNoProxy, " ")
+	if strings.Contains(noJoined, "-p ") {
+		t.Fatalf("expected no proxy flag when proxy is empty, got: %s", noJoined)
 	}
 }
 
@@ -672,7 +664,7 @@ func TestBuildCrawlHeadersStripsDuplicateUA(t *testing.T) {
 
 func TestBuildCrawlHeadersStripsDuplicateCookie(t *testing.T) {
 	headers := buildCrawlHeaders(Options{
-		Cookie:   "session=abc",
+		Cookie:  "session=abc",
 		Headers: []string{"Cookie: other=xyz"},
 	})
 
@@ -692,7 +684,7 @@ func TestCrawlTargetWithOptions(t *testing.T) {
 	cancel()
 
 	_, err := CrawlTarget(ctx, "http://127.0.0.1:1", 10, 1, nil, Options{
-		Cookie: "session=test123",
+		Cookie:  "session=test123",
 		Headers: []string{"Authorization: Bearer token"},
 	})
 	if err == nil {
