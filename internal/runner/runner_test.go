@@ -706,7 +706,7 @@ func TestWAFBlockPatternsNotEmpty(t *testing.T) {
 	}
 }
 
-func TestCheckWAFBlockDetectsCloudflare(t *testing.T) {
+func TestCheckWAFBlockAllowsCloudflareCDN(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cf-Ray", "12345-abc")
 		w.Header().Set("Server", "cloudflare")
