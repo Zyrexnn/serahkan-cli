@@ -8,3 +8,7 @@ report_*.md
 config.yaml
 target.txt
 targets.txt
+
+# OpenCode internal tooling
+.opencode/
+
