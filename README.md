@@ -13,7 +13,25 @@
   \___ \|  __| |  _  / / /\ \ |  __  || |/  /  / /\ \ | | |
   ____) | |____| | \ \/ ____ \| |  | || |\  \ / ____ \| | |
  |_____/|______|_|  \_\_/    \_\_|  |_||_| \_/_/    \_\_|_|
+  SERAHKAN CLI [vdev]
+  AI-powered web security scanner
 ```
+
+---
+
+## Demo
+
+### Laporan AI Defensive Analysis
+
+Analisis otomatis dengan AI yang menghasilkan laporan terstruktur berisi root cause analysis, vulnerability audit, dan remediation playbook:
+
+![Laporan AI](aset-gambar/hasil%20laporan%20dengan%20ai.png)
+
+### Output JSON Mentah (--skip-ai)
+
+Ketika AI tidak aktif, serahkan CLI menampilkan findings dalam format JSON mentah yang siap di-parse atau dipipeline:
+
+![Output JSON](aset-gambar/hasil%20laporan%20output%20json.png)
 
 ---
 
@@ -34,6 +52,7 @@ Nuclei is powerful but raw. `serahkan-cli` wraps it so you can:
 
 ## Table of Contents
 
+- [Demo](#demo)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Commands](#commands)
@@ -45,6 +64,7 @@ Nuclei is powerful but raw. `serahkan-cli` wraps it so you can:
 - [WAF & CDN Handling](#waf--cdn-handling)
 - [Crawling](#crawling)
 - [AI Analysis](#ai-analysis)
+- [Skip AI Mode](#skip-ai-mode)
 - [Reporting & Export](#reporting--export)
 - [URL Sanitization](#url-sanitization)
 - [Output Schemas](#output-schemas)
@@ -341,6 +361,27 @@ The prompt is tuned to avoid common local-LLM failure modes:
 
 If the model output doesn't match the expected structure, a deterministic fallback report is generated from the parsed findings (so you always get something usable).
 
+![Laporan AI](aset-gambar/hasil%20laporan%20dengan%20ai.png)
+
+---
+
+## Skip AI Mode
+
+When AI is not available or you want raw findings only, use `--skip-ai` to bypass AI analysis entirely. Instead of the AI report, `serahkan-cli` dumps the findings directly as formatted JSON to the terminal:
+
+```bash
+serahkan scan -t https://example.com --skip-ai --profile benchmark-web
+```
+
+This is useful for:
+
+- **CI/CD pipelines** — pipe raw JSON directly to other tools.
+- **Quick triage** — see all findings without waiting for AI inference.
+- **Offline environments** — no LLM configured, still get structured output.
+- **Custom post-processing** — feed the JSON into your own analysis scripts.
+
+![Output JSON](aset-gambar/hasil%20laporan%20output%20json.png)
+
 ---
 
 ## Reporting & Export
@@ -392,7 +433,7 @@ serahkan scan -t "http://example.com/?__cf_chl_f_tk=abc&page=1"
 
 ### Text mode (default)
 
-Prints an ASCII summary (target, finding count, AI status, duration) plus the full AI defensive report. When no findings match, it lists diagnostic reasons (unauthenticated state, timeout caps, login-page suggestions, etc.).
+Prints an ASCII summary (target, finding count, AI status, duration) plus the full AI defensive report. When `--skip-ai` is active, the summary is shown followed by a raw JSON dump of the findings. When no findings match, it lists diagnostic reasons (unauthenticated state, timeout caps, login-page suggestions, etc.).
 
 ### JSON mode (`--output json`)
 
@@ -439,7 +480,7 @@ serahkan scan -t https://example.com --output json > report.json
 | `--retries` | `0` | Connection retries. |
 | `--proxy` | — | HTTP/SOCKS5 proxy for all requests (e.g. `http://127.0.0.1:8080`). |
 | `--interactsh` | `false` | Enable out-of-band interaction templates. |
-| `--skip-ai` | `false` | Skip AI analysis. |
+| `--skip-ai` | `false` | Skip AI analysis, dump raw findings JSON to terminal. |
 | `--ai-endpoint` | config | Override AI endpoint. |
 | `--ai-model` | config | Override AI model. |
 | `--ai-api-key` | config | Override API key (cloud endpoints). |
