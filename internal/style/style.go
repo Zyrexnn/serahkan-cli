@@ -3,8 +3,12 @@ package style
 import (
 	"fmt"
 	"io"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
+	reportpkg "github.com/Zyrexnn/serahkan-cli/internal/report"
 	"github.com/fatih/color"
 )
 
@@ -31,6 +35,67 @@ var (
 	TagSkip    = color.New(color.FgYellow).Sprint("[SKIP]")
 	TagBlocked = color.New(color.FgRed, color.Bold).Sprint("[BLOCKED]")
 )
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func ansiVisibleLen(s string) int {
+	return len([]rune(ansiRe.ReplaceAllString(s, "")))
+}
+
+func termWidth() int {
+	if s := strings.TrimSpace(os.Getenv("COLUMNS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 40 {
+			return n
+		}
+	}
+	return 80
+}
+
+func wrapText(s string, width int) []string {
+	if width <= 0 {
+		width = 80
+	}
+	var out []string
+	for _, para := range strings.Split(s, "\n") {
+		words := strings.Fields(para)
+		if len(words) == 0 {
+			out = append(out, "")
+			continue
+		}
+		var split []string
+		for _, w := range words {
+			if ansiVisibleLen(w) > width {
+				runes := []rune(w)
+				for i := 0; i < len(runes); i += width {
+					end := i + width
+					if end > len(runes) {
+						end = len(runes)
+					}
+					split = append(split, string(runes[i:end]))
+				}
+			} else {
+				split = append(split, w)
+			}
+		}
+		line := split[0]
+		lineLen := ansiVisibleLen(line)
+		for _, w := range split[1:] {
+			wLen := ansiVisibleLen(w)
+			if lineLen+1+wLen <= width {
+				line += " " + w
+				lineLen += 1 + wLen
+			} else {
+				out = append(out, line)
+				line = w
+				lineLen = wLen
+			}
+		}
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
 
 func Target(value string) string {
 	return Cyan.Sprint(value)
@@ -65,6 +130,10 @@ func Label(label, value string) string {
 }
 
 func PrintBanner(w io.Writer, version string) {
+	dim := color.New(color.FgHiBlack)
+	cyan := color.New(color.FgCyan, color.Bold)
+	ver := color.New(color.FgGreen, color.Bold)
+
 	banner := `   _____ ______ _____          _    _  _    _          _ _ 
   / ____|  ____|  __ \   /\   | |  | || |  / \   /\   | | |
  | (___ | |__  | |__) | /  \  | |__| || | /  /  /  \  | | |
@@ -72,13 +141,9 @@ func PrintBanner(w io.Writer, version string) {
   ____) | |____| | \ \/ ____ \| |  | || |\  \ / ____ \| | |
  |_____/|______|_|  \_\_/    \_\_|  |_||_| \_/_/    \_\_|_|`
 
-	dim := color.New(color.FgHiBlack)
-	cyan := color.New(color.FgCyan, color.Bold)
-	ver := color.New(color.FgGreen, color.Bold)
-
 	fmt.Fprintln(w, cyan.Sprint(banner))
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %s %s\n", dim.Sprint("AI-powered Nuclei orchestration engine"), ver.Sprint("[v"+version+"]"))
+	fmt.Fprintf(w, "  %s %s\n", dim.Sprint("SERAHKAN CLI"), ver.Sprint("[v"+version+"]"))
+	fmt.Fprintf(w, "  %s\n", dim.Sprint("AI-powered web security scanner"))
 	fmt.Fprintf(w, "  %s\n", dim.Sprint("──────────────────────────────────────────────────────"))
 	fmt.Fprintln(w)
 }
@@ -97,7 +162,7 @@ func PrintScanSummary(w io.Writer, target string, findingCount int, aiUsed bool,
 	fmt.Fprintf(w, "  %-12s %s\n", Cyan.Sprint("Target  :"), Target(target))
 	fmt.Fprintf(w, "  %-12s %s\n", Green.Sprint("Findings:"), Bold(fmt.Sprintf("%d", findingCount)))
 	fmt.Fprintf(w, "  %-12s %s\n", Purple.Sprint("AI Used :"), Bold(fmt.Sprintf("%t", aiUsed)))
-	fmt.Fprintf(w, "  %-12s %s\n", Purple.Sprint("AI Stat :"), Bold(aiStatus))
+	fmt.Fprintf(w, "  %-12s %s\n", Purple.Sprint("AI      :"), Bold(aiStatus))
 	fmt.Fprintf(w, "  %-12s %s\n", Grey.Sprint("Duration:"), Dim(duration))
 	fmt.Fprintln(w, sep)
 }
@@ -114,162 +179,158 @@ func PrintNoFindingsSummary(w io.Writer, target string, raw, filtered int, durat
 	fmt.Fprintln(w, sep)
 }
 
+func printBoxedHeader(w io.Writer, title string) {
+	width := termWidth() - 2
+	if width < ansiVisibleLen(title)+4 {
+		width = ansiVisibleLen(title) + 4
+	}
+	bc := strings.Repeat("=", width)
+	fmt.Fprintf(w, "\n")
+	fmt.Fprintf(w, "  %s%s%s\n", DimWhite.Sprint("+"), DimWhite.Sprint(bc), DimWhite.Sprint("+"))
+	titleVis := ansiVisibleLen(title)
+	pad := width - titleVis
+	left := pad / 2
+	right := pad - left
+	fmt.Fprintf(w, "  %s%s%s%s%s\n", DimWhite.Sprint("|"), strings.Repeat(" ", left), title, strings.Repeat(" ", right), DimWhite.Sprint("|"))
+	fmt.Fprintf(w, "  %s%s%s\n", DimWhite.Sprint("+"), DimWhite.Sprint(bc), DimWhite.Sprint("+"))
+}
+
+func printBoxedFooter(w io.Writer) {
+	width := termWidth() - 2
+	bc := strings.Repeat("=", width)
+	fmt.Fprintf(w, "  %s%s%s\n", DimWhite.Sprint("+"), DimWhite.Sprint(bc), DimWhite.Sprint("+"))
+	fmt.Fprintf(w, "\n")
+}
+
 func PrintAIReport(w io.Writer, report string) {
-	sep := DimWhite.Sprint("═══════════════════════════════════════════════════════════════════════════════")
-	title := Cyan.Sprint("                       AI DEFENSIVE ANALYSIS REPORT")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, sep)
-	fmt.Fprintf(w, "  %s\n", title)
-	fmt.Fprintln(w, sep)
+	sections := reportpkg.Parse(report)
+
+	printBoxedHeader(w, Cyan.Sprint("SERAHKAN CLI - AI Defensive Analysis"))
 	fmt.Fprintln(w)
 
-	lines := strings.Split(report, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			fmt.Fprintln(w)
-		} else if strings.HasPrefix(trimmed, "[=]") {
-			header := strings.TrimPrefix(trimmed, "[=]")
-			fmt.Fprintf(w, "  %s %s\n", Green.Sprint("[=]"), Green.Sprint(strings.TrimSpace(header)))
-		} else if strings.HasPrefix(trimmed, "[!]") {
-			inner := strings.TrimPrefix(trimmed, "[!]")
-			fmt.Fprintf(w, "  %s %s\n", Red.Sprint("[!]"), Red.Sprint(strings.TrimSpace(inner)))
-		} else if strings.HasPrefix(trimmed, "[*]") {
-			inner := strings.TrimPrefix(trimmed, "[*]")
-			fmt.Fprintf(w, "  %s %s\n", Cyan.Sprint("[*]"), Cyan.Sprint(strings.TrimSpace(inner)))
-		} else if strings.HasPrefix(trimmed, "---") || strings.HasPrefix(trimmed, "===") || strings.HasPrefix(trimmed, "+-") {
-			fmt.Fprintf(w, "  %s\n", DimWhite.Sprint(trimmed))
-		} else if strings.HasPrefix(trimmed, "$ ") {
-			cmd := strings.TrimPrefix(trimmed, "$ ")
-			fmt.Fprintf(w, "    $ %s\n", Yellow.Sprint(cmd))
-		} else if strings.HasPrefix(trimmed, "- Target Host") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), Target(strings.TrimSpace(parts[1])))
-			} else {
-				fmt.Fprintf(w, "  %s\n", line)
-			}
-		} else if strings.HasPrefix(trimmed, "- Risk Status") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), Red.Sprint(strings.TrimSpace(parts[1])))
-			} else {
-				fmt.Fprintf(w, "  %s\n", line)
-			}
-		} else if strings.HasPrefix(trimmed, "- Risk Level") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				severity := strings.TrimSpace(parts[1])
-				var colored string
-				switch strings.ToLower(severity) {
-				case "critical", "high":
-					colored = Red.Sprint(severity)
-				case "medium":
-					colored = Yellow.Sprint(severity)
-				default:
-					colored = Dim(severity)
-				}
-				fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), colored)
-			} else {
-				fmt.Fprintf(w, "  %s\n", line)
-			}
-		} else if strings.HasPrefix(trimmed, "Targeted Component:") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), Cyan.Sprint(strings.TrimSpace(parts[1])))
-			} else {
-				fmt.Fprintf(w, "  %s\n", line)
-			}
-		} else {
+	if len(sections) == 0 {
+		for _, line := range strings.Split(strings.TrimSpace(report), "\n") {
 			fmt.Fprintf(w, "  %s\n", line)
 		}
-	}
-
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, sep)
-}
-
-func PrintAIReportHeader(w io.Writer) {
-	sep := DimWhite.Sprint("═══════════════════════════════════════════════════════════════════════════════")
-	title := Cyan.Sprint("                       AI DEFENSIVE ANALYSIS REPORT")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, sep)
-	fmt.Fprintf(w, "  %s\n", title)
-	fmt.Fprintln(w, sep)
-	fmt.Fprintln(w)
-}
-
-func PrintAIReportFooter(w io.Writer) {
-	sep := DimWhite.Sprint("═══════════════════════════════════════════════════════════════════════════════")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, sep)
-}
-
-func PrintAIReportLine(w io.Writer, line string) {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
 		fmt.Fprintln(w)
-	} else if strings.HasPrefix(trimmed, "[=]") {
-		header := strings.TrimPrefix(trimmed, "[=]")
-		fmt.Fprintf(w, "  %s %s\n", Green.Sprint("[=]"), Green.Sprint(strings.TrimSpace(header)))
-	} else if strings.HasPrefix(trimmed, "[!]") {
-		inner := strings.TrimPrefix(trimmed, "[!]")
-		fmt.Fprintf(w, "  %s %s\n", Red.Sprint("[!]"), Red.Sprint(strings.TrimSpace(inner)))
-	} else if strings.HasPrefix(trimmed, "[*]") {
-		inner := strings.TrimPrefix(trimmed, "[*]")
-		fmt.Fprintf(w, "  %s %s\n", Cyan.Sprint("[*]"), Cyan.Sprint(strings.TrimSpace(inner)))
-	} else if strings.HasPrefix(trimmed, "---") || strings.HasPrefix(trimmed, "===") || strings.HasPrefix(trimmed, "+-") {
-		fmt.Fprintf(w, "  %s\n", DimWhite.Sprint(trimmed))
-	} else if strings.HasPrefix(trimmed, "$ ") {
-		cmd := strings.TrimPrefix(trimmed, "$ ")
-		fmt.Fprintf(w, "    $ %s\n", Yellow.Sprint(cmd))
-	} else if strings.HasPrefix(trimmed, "- Target Host") {
-		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) == 2 {
-			fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), Target(strings.TrimSpace(parts[1])))
-		} else {
-			fmt.Fprintf(w, "  %s\n", line)
-		}
-	} else if strings.HasPrefix(trimmed, "- Risk Status") {
-		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) == 2 {
-			fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), Red.Sprint(strings.TrimSpace(parts[1])))
-		} else {
-			fmt.Fprintf(w, "  %s\n", line)
-		}
-	} else if strings.HasPrefix(trimmed, "- Risk Level") {
-		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) == 2 {
-			severity := strings.TrimSpace(parts[1])
-			var colored string
-			switch strings.ToLower(severity) {
-			case "critical", "high":
-				colored = Red.Sprint(severity)
-			case "medium":
-				colored = Yellow.Sprint(severity)
-			default:
-				colored = Dim(severity)
-			}
-			fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), colored)
-		} else {
-			fmt.Fprintf(w, "  %s\n", line)
-		}
-	} else if strings.HasPrefix(trimmed, "Targeted Component:") {
-		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) == 2 {
-			fmt.Fprintf(w, "    %s : %s\n", DimWhite.Sprint(parts[0]), Cyan.Sprint(strings.TrimSpace(parts[1])))
-		} else {
-			fmt.Fprintf(w, "  %s\n", line)
-		}
-	} else {
-		fmt.Fprintf(w, "  %s\n", line)
+		printBoxedFooter(w)
+		return
 	}
+
+	contentWidth := termWidth() - 8
+	if contentWidth < 40 {
+		contentWidth = 40
+	}
+
+	for _, section := range sections {
+		switch section.Kind {
+		case "heading":
+			fmt.Fprintf(w, "  %s %s\n", Green.Sprint("[=]"), Green.Sprint(section.Title))
+			if section.Content != "" {
+				for _, line := range wrapText(section.Content, contentWidth) {
+					fmt.Fprintf(w, "      %s\n", line)
+				}
+			}
+		case "finding":
+			fmt.Fprintf(w, "  %s %s\n", Red.Sprint("[!]"), Red.Sprint(section.Title))
+			printReportItems(w, section.Items, contentWidth)
+		case "action":
+			fmt.Fprintf(w, "  %s %s\n", Cyan.Sprint("[*]"), Cyan.Sprint(section.Title))
+			printReportItems(w, section.Items, contentWidth)
+		}
+		fmt.Fprintln(w)
+	}
+
+	fmt.Fprintln(w)
+	printBoxedFooter(w)
+}
+
+func printReportItems(w io.Writer, items []reportpkg.Item, contentWidth int) {
+	for _, item := range items {
+		switch {
+		case item.IsCode:
+			printReportCodeBlock(w, item.Value, contentWidth)
+		case item.IsBullet:
+			bulletIndent := "      - "
+			bulletWrap := contentWidth - len(bulletIndent)
+			if bulletWrap < 30 {
+				bulletWrap = 30
+			}
+			valLines := wrapText(item.Value, bulletWrap)
+			if len(valLines) == 0 {
+				fmt.Fprintln(w, bulletIndent)
+				continue
+			}
+			fmt.Fprintf(w, "%s%s\n", bulletIndent, valLines[0])
+			hang := strings.Repeat(" ", len(bulletIndent))
+			for _, l := range valLines[1:] {
+				fmt.Fprintf(w, "%s%s\n", hang, l)
+			}
+		case item.Key != "":
+			value := item.Value
+			if strings.EqualFold(strings.TrimSpace(item.Key), "Risk Level") {
+				value = colorSeverity(item.Value)
+			}
+			if strings.EqualFold(strings.TrimSpace(item.Key), "Target Host") {
+				value = Target(item.Value)
+			}
+			keyStr := item.Key + ":"
+			keyVis := len([]rune(item.Key)) + 1
+			padNeeded := 24 - keyVis
+			if padNeeded < 1 {
+				padNeeded = 1
+			}
+			keyLabel := DimWhite.Sprint(keyStr) + strings.Repeat(" ", padNeeded)
+			valWrap := contentWidth - keyVis - 2
+			if valWrap < 30 {
+				valWrap = 30
+			}
+			valLines := wrapText(value, valWrap)
+			if len(valLines) == 0 {
+				fmt.Fprintf(w, "      %s\n", keyLabel)
+				continue
+			}
+			fmt.Fprintf(w, "      %s %s\n", keyLabel, valLines[0])
+			hangIndent := strings.Repeat(" ", 6+keyVis+1)
+			for _, l := range valLines[1:] {
+				fmt.Fprintf(w, "%s%s\n", hangIndent, l)
+			}
+		}
+	}
+}
+
+func colorSeverity(value string) string {
+	severity := strings.TrimSpace(value)
+	switch strings.ToLower(severity) {
+	case "critical", "high":
+		return Red.Sprint(severity)
+	case "medium":
+		return Yellow.Sprint(severity)
+	case "low":
+		return Cyan.Sprint(severity)
+	default:
+		return Dim(severity + " [informational]")
+	}
+}
+
+func printReportCodeBlock(w io.Writer, code string, contentWidth int) {
+	border := strings.Repeat("-", contentWidth)
+	fmt.Fprintf(w, "      %s\n", DimWhite.Sprint(border))
+	for _, line := range strings.Split(strings.TrimSpace(code), "\n") {
+		trimmed := strings.TrimRight(line, "\r")
+		if strings.HasPrefix(strings.TrimSpace(trimmed), "$ ") {
+			fmt.Fprintf(w, "      %s\n", Yellow.Sprint(trimmed))
+			continue
+		}
+		fmt.Fprintf(w, "      %s\n", trimmed)
+	}
+	fmt.Fprintf(w, "      %s\n", DimWhite.Sprint(border))
 }
 
 func PrintVersionInfo(w io.Writer, version, commit, date, goVersion, osArch string) {
 	sep := DimWhite.Sprint("─────────────────────────────────────────────────────")
 	fmt.Fprintln(w, sep)
-	fmt.Fprintf(w, "  %-12s %s\n", Cyan.Sprint("serahkan"), Green.Sprint(version))
+	fmt.Fprintf(w, "  %-12s %s\n", Cyan.Sprint("SERAHKAN CLI"), Green.Sprint(version))
 	fmt.Fprintf(w, "  %-12s %s\n", DimWhite.Sprint("commit :"), Dim(commit))
 	fmt.Fprintf(w, "  %-12s %s\n", DimWhite.Sprint("built  :"), Dim(date))
 	fmt.Fprintf(w, "  %-12s %s\n", DimWhite.Sprint("go     :"), Dim(goVersion))
@@ -279,7 +340,7 @@ func PrintVersionInfo(w io.Writer, version, commit, date, goVersion, osArch stri
 
 func PrintDoctorHeader(w io.Writer) {
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %s\n", Cyan.Sprint("serahkan doctor"))
+	fmt.Fprintf(w, "  %s\n", Cyan.Sprint("SERAHKAN CLI doctor"))
 	fmt.Fprintf(w, "  %s\n", DimWhite.Sprint("─────────────────────────────────────────────────────"))
 	fmt.Fprintln(w)
 }

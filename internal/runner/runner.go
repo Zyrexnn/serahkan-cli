@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Zyrexnn/serahkan-cli/internal/parser"
+	"github.com/Zyrexnn/serahkan-cli/internal/style"
 )
 
 type Options struct {
@@ -163,6 +164,44 @@ func validateProxy(proxy string) error {
 	return nil
 }
 
+func renderNucleiStderr(logWriter io.Writer, raw string, verbose bool) {
+	if logWriter == nil || strings.TrimSpace(raw) == "" {
+		return
+	}
+
+	inBanner := false
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		if strings.Contains(trimmed, "projectdiscovery.io") {
+			inBanner = false
+			continue
+		}
+		if strings.Contains(trimmed, "____  __") || strings.HasPrefix(trimmed, "__     _") || inBanner {
+			inBanner = true
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(trimmed, "[FTL]") || strings.HasPrefix(trimmed, "[ERR]"):
+			fmt.Fprintf(logWriter, "%s %s\n", style.TagFail, trimmed)
+		case strings.HasPrefix(trimmed, "[WRN]") || strings.HasPrefix(trimmed, "[WARNING]"):
+			fmt.Fprintf(logWriter, "%s %s\n", style.TagWarn, trimmed)
+		case strings.HasPrefix(trimmed, "[INF]"):
+			if verbose {
+				fmt.Fprintf(logWriter, "%s %s\n", style.TagDebug, trimmed)
+			}
+		default:
+			if verbose {
+				fmt.Fprintf(logWriter, "%s %s\n", style.TagDebug, trimmed)
+			}
+		}
+	}
+}
+
 func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []string, options Options) (Result, error) {
 	nucleiPath, err := ResolveNucleiPath()
 	if err != nil {
@@ -223,9 +262,7 @@ func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []s
 	})
 	waitErr := cmd.Wait()
 
-	if stderr.Len() > 0 {
-		fmt.Fprintf(os.Stderr, "[DEBUG-ERROR] Nuclei Stderr: %s\n", strings.TrimSpace(stderr.String()))
-	}
+	renderNucleiStderr(options.LogWriter, stderr.String(), options.Verbose)
 
 	result := Result{
 		Findings:           parseResult.Findings,

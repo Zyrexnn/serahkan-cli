@@ -95,8 +95,8 @@ func TestExportHTML(t *testing.T) {
 	}
 
 	html := string(content)
-	if !strings.Contains(html, "SERAHKAN") {
-		t.Error("expected SERAHKAN in HTML output")
+	if !strings.Contains(html, "SERAHKAN CLI") {
+		t.Error("expected SERAHKAN CLI in HTML output")
 	}
 	if !strings.Contains(html, "test.example.com") {
 		t.Error("expected target host in HTML output")
@@ -133,7 +133,7 @@ func TestExportMarkdown(t *testing.T) {
 	}
 
 	md := string(content)
-	if !strings.Contains(md, "# SERAHKAN Security Report") {
+	if !strings.Contains(md, "# SERAHKAN CLI - Security Report") {
 		t.Error("expected markdown header")
 	}
 	if !strings.Contains(md, "test.example.com") {

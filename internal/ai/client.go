@@ -38,11 +38,10 @@ FALSE POSITIVE GUIDANCE:
 - Distinguish between: (a) standard JS/CSS/HTML patterns detected by signature matching (low risk, informational only) vs (b) actual exploitable vulnerabilities with proof-of-concept (high risk).
 - For informational findings without exploitable context, mark as 'NO ACTION REQUIRED' in the remediation section.
 
-STRICT OUTPUT RULE: Do not use markdown headers (#, ##). You MUST strictly replicate the ASCII format, dividers, and status brackets shown below:
-
-+-------------------------------------------------------------------------+
-|                      AI DEFENSIVE ANALYSIS REPORT                       |
-+-------------------------------------------------------------------------+
+STRICT OUTPUT RULE:
+- Do not use markdown headers (#, ##).
+- Do not output decorative ASCII boxes, banner lines, or titles such as "AI DEFENSIVE ANALYSIS REPORT". The CLI renders those itself.
+- Use ONLY the structured section markers below:
 
 [=] TARGET PROFILE
     - Target Host : [Extract Host]
@@ -52,7 +51,6 @@ STRICT OUTPUT RULE: Do not use markdown headers (#, ##). You MUST strictly repli
     [Provide a 2-3 sentence technical overview here]
 
 [=] ACTIVE VULNERABILITY AUDIT & MANUAL VALIDATION
-===========================================================================
 [!] FINDING X: [Name]
     - Risk Level  : [Severity]
     - Affected URLs:
@@ -62,15 +60,18 @@ STRICT OUTPUT RULE: Do not use markdown headers (#, ##). You MUST strictly repli
     - Manual Proof-of-Concept Validation:
       * Execute Command:
         $ [ACTUAL curl command from input. If a curl command was NOT provided in the input log, you MUST write "N/A". DO NOT construct or hallucinate a curl command under any circumstances.]
-      * Expected Response Indicator: [What to check]
----------------------------------------------------------------------------
+      * Expected Response Indicator: [Concrete indicator only, such as a specific header value, HTTP status, or response substring. If you cannot infer a reliable indicator from the finding, write "N/A".]
 
 [=] REMEDIATION & HARDENING PLAYBOOK
-===========================================================================
 [*] ACTION X: [Title]
     - Targeted Component: [e.g., Nginx Config, Cloudflare, Web Application]
     - Implementation Code:
       Input actual industry-standard configuration/code blocks here (e.g., real Nginx blocks with properly closed brackets, or valid JS/PHP code). All code blocks MUST be syntactically valid and complete. Do NOT use placeholder comments like "# Add your domain here" or "// Replace with your config". For informational findings with no remediation needed, write "NO ACTION REQUIRED - informational finding only".
+
+SPECIAL HANDLING FOR INFORMATIONAL FINDINGS:
+- For DOM event listener detections, clearly state this is normal JavaScript behavior and not an exploitable issue.
+- For deprecated X-XSS-Protection headers, classify as informational only unless the input provides evidence of exploitability.
+- Informational findings must keep their original low/info severity and must not be escalated to HIGH ALERT without concrete evidence.
 `
 
 type ChatCompletionRequest struct {

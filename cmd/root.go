@@ -10,7 +10,7 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:           "serahkan",
-	Short:         "AI-powered bug bounty and pentesting CLI wrapper",
+	Short:         "SERAHKAN CLI - AI-powered web security scanner",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	Version:       Version,

@@ -3,213 +3,18 @@ package exporter
 import (
 	"fmt"
 	"html"
-	"regexp"
 	"strings"
+
+	"github.com/Zyrexnn/serahkan-cli/internal/report"
 )
 
-var headingRe = regexp.MustCompile(`^\[=\]\s+(.+)$`)
-var findingRe = regexp.MustCompile(`^\[!\]\s+(.+)$`)
-var actionRe = regexp.MustCompile(`^\[\*\]\s+(.+)$`)
-var dividerRe = regexp.MustCompile(`^[=\-+]{3,}$`)
-var bulletRe = regexp.MustCompile(`^\s*-\s+(.+)$`)
-var kvRe = regexp.MustCompile(`^(-?\s*[\w\s]+?)\s*:\s*(.+)$`)
-
-func parseReportSections(raw string) (sections []reportSection) {
-	lines := strings.Split(raw, "\n")
-	i := 0
-	for i < len(lines) {
-		line := strings.TrimSpace(lines[i])
-		i++
-
-		if line == "" {
-			continue
-		}
-
-		if dividerRe.MatchString(line) {
-			continue
-		}
-
-		if strings.Contains(line, "AI DEFENSIVE ANALYSIS REPORT") {
-			continue
-		}
-		if strings.Contains(line, "+-") && strings.Contains(line, "-+") {
-			continue
-		}
-
-		if m := headingRe.FindStringSubmatch(line); m != nil {
-			title := html.EscapeString(strings.TrimSpace(m[1]))
-			var contentLines []string
-			for i < len(lines) {
-				next := strings.TrimSpace(lines[i])
-				if headingRe.MatchString(next) || findingRe.MatchString(next) || actionRe.MatchString(next) {
-					break
-				}
-				if dividerRe.MatchString(next) {
-					i++
-					continue
-				}
-				if next == "" {
-					i++
-					continue
-				}
-				contentLines = append(contentLines, next)
-				i++
-			}
-			sections = append(sections, reportSection{
-				kind:    "heading",
-				title:   title,
-				content: strings.Join(contentLines, "\n"),
-			})
-			continue
-		}
-
-		if m := findingRe.FindStringSubmatch(line); m != nil {
-			title := html.EscapeString(strings.TrimSpace(m[1]))
-			var items []reportItem
-			var currentKey, currentVal string
-			flush := func() {
-				if currentKey != "" {
-					items = append(items, reportItem{Key: currentKey, Value: currentVal})
-					currentKey = ""
-					currentVal = ""
-				}
-			}
-			for i < len(lines) {
-				next := strings.TrimSpace(lines[i])
-				if findingRe.MatchString(next) || actionRe.MatchString(next) || headingRe.MatchString(next) {
-					break
-				}
-				if dividerRe.MatchString(next) {
-					i++
-					continue
-				}
-				if next == "" {
-					flush()
-					i++
-					continue
-				}
-				if bm := bulletRe.FindStringSubmatch(next); bm != nil {
-					flush()
-					items = append(items, reportItem{Value: html.EscapeString(strings.TrimSpace(bm[1])), IsBullet: true})
-					i++
-					continue
-				}
-				if km := kvRe.FindStringSubmatch(next); km != nil {
-					flush()
-					currentKey = html.EscapeString(strings.TrimSpace(km[1]))
-					currentVal = html.EscapeString(strings.TrimSpace(km[2]))
-					i++
-					continue
-				}
-				if currentKey != "" {
-					currentVal += " " + html.EscapeString(next)
-				}
-				i++
-			}
-			flush()
-			sections = append(sections, reportSection{
-				kind:  "finding",
-				title: title,
-				items: items,
-			})
-			continue
-		}
-
-		if m := actionRe.FindStringSubmatch(line); m != nil {
-			title := html.EscapeString(strings.TrimSpace(m[1]))
-			var items []reportItem
-			var currentKey, currentVal string
-			flush := func() {
-				if currentKey != "" {
-					items = append(items, reportItem{Key: currentKey, Value: currentVal})
-					currentKey = ""
-					currentVal = ""
-				}
-			}
-			for i < len(lines) {
-				next := strings.TrimSpace(lines[i])
-				if findingRe.MatchString(next) || actionRe.MatchString(next) || headingRe.MatchString(next) {
-					break
-				}
-				if dividerRe.MatchString(next) {
-					i++
-					continue
-				}
-				if next == "" {
-					flush()
-					i++
-					continue
-				}
-				if km := kvRe.FindStringSubmatch(next); km != nil {
-					flush()
-					currentKey = html.EscapeString(strings.TrimSpace(km[1]))
-					currentVal = html.EscapeString(strings.TrimSpace(km[2]))
-					i++
-					continue
-				}
-				if next == "```" {
-					i++
-					codeLines := []string{}
-					for i < len(lines) {
-						cl := strings.TrimSpace(lines[i])
-						if cl == "```" {
-							i++
-							break
-						}
-						codeLines = append(codeLines, html.EscapeString(cl))
-						i++
-					}
-					flush()
-					items = append(items, reportItem{IsCode: true, Value: strings.Join(codeLines, "\n")})
-					continue
-				}
-				if currentKey != "" {
-					currentVal += " " + html.EscapeString(next)
-				}
-				i++
-			}
-			flush()
-			sections = append(sections, reportSection{
-				kind:  "action",
-				title: title,
-				items: items,
-			})
-			continue
-		}
-
-		if len(sections) > 0 {
-			last := &sections[len(sections)-1]
-			if last.content == "" {
-				last.content = html.EscapeString(line)
-			} else {
-				last.content += "\n" + html.EscapeString(line)
-			}
-		}
-	}
-	return
-}
-
-type reportSection struct {
-	kind    string
-	title   string
-	content string
-	items   []reportItem
-}
-
-type reportItem struct {
-	Key      string
-	Value    string
-	IsBullet bool
-	IsCode   bool
-}
-
-func renderFindingHTML(s reportSection) string {
+func renderFindingHTML(s report.Section) string {
 	var b strings.Builder
 	b.WriteString(`<div class="finding-card">`)
-	b.WriteString(fmt.Sprintf(`<div class="finding-header"><span class="finding-icon">!</span><span class="finding-title">%s</span></div>`, s.title))
+	b.WriteString(fmt.Sprintf(`<div class="finding-header"><span class="finding-icon">!</span><span class="finding-title">%s</span></div>`, html.EscapeString(s.Title)))
 
 	urls := []string{}
-	for _, item := range s.items {
+	for _, item := range s.Items {
 		if item.IsBullet {
 			urls = append(urls, item.Value)
 		}
@@ -217,38 +22,38 @@ func renderFindingHTML(s reportSection) string {
 	if len(urls) > 0 {
 		b.WriteString(`<div class="finding-urls"><div class="finding-url-label">Affected URLs</div>`)
 		for _, u := range urls {
-			b.WriteString(fmt.Sprintf(`<div class="finding-url">%s</div>`, u))
+			b.WriteString(fmt.Sprintf(`<div class="finding-url">%s</div>`, html.EscapeString(u)))
 		}
 		b.WriteString(`</div>`)
 	}
 
-	for _, item := range s.items {
+	for _, item := range s.Items {
 		if item.IsBullet || item.Key == "" {
 			continue
 		}
 		if item.IsCode {
-			b.WriteString(fmt.Sprintf(`<div class="finding-code"><pre>%s</pre></div>`, item.Value))
+			b.WriteString(fmt.Sprintf(`<div class="finding-code"><pre>%s</pre></div>`, html.EscapeString(item.Value)))
 			continue
 		}
-		b.WriteString(fmt.Sprintf(`<div class="finding-detail"><span class="detail-key">%s:</span> <span class="detail-value">%s</span></div>`, item.Key, item.Value))
+		b.WriteString(fmt.Sprintf(`<div class="finding-detail"><span class="detail-key">%s:</span> <span class="detail-value">%s</span></div>`, html.EscapeString(item.Key), html.EscapeString(item.Value)))
 	}
 
 	b.WriteString(`</div>`)
 	return b.String()
 }
 
-func renderActionHTML(s reportSection) string {
+func renderActionHTML(s report.Section) string {
 	var b strings.Builder
 	b.WriteString(`<div class="action-card">`)
-	b.WriteString(fmt.Sprintf(`<div class="action-header"><span class="action-icon">*</span><span class="action-title">%s</span></div>`, s.title))
+	b.WriteString(fmt.Sprintf(`<div class="action-header"><span class="action-icon">*</span><span class="action-title">%s</span></div>`, html.EscapeString(s.Title)))
 
-	for _, item := range s.items {
+	for _, item := range s.Items {
 		if item.Key == "" && item.IsCode {
-			b.WriteString(fmt.Sprintf(`<div class="action-code"><pre>%s</pre></div>`, item.Value))
+			b.WriteString(fmt.Sprintf(`<div class="action-code"><pre>%s</pre></div>`, html.EscapeString(item.Value)))
 			continue
 		}
 		if item.Key != "" {
-			b.WriteString(fmt.Sprintf(`<div class="action-detail"><span class="detail-key">%s:</span> <span class="detail-value">%s</span></div>`, item.Key, item.Value))
+			b.WriteString(fmt.Sprintf(`<div class="action-detail"><span class="detail-key">%s:</span> <span class="detail-value">%s</span></div>`, html.EscapeString(item.Key), html.EscapeString(item.Value)))
 		}
 	}
 
@@ -256,12 +61,12 @@ func renderActionHTML(s reportSection) string {
 	return b.String()
 }
 
-func renderHeadingHTML(s reportSection) string {
+func renderHeadingHTML(s report.Section) string {
 	var b strings.Builder
 	b.WriteString(`<div class="report-block">`)
-	b.WriteString(fmt.Sprintf(`<div class="block-title">%s</div>`, s.title))
-	if s.content != "" {
-		b.WriteString(fmt.Sprintf(`<div class="block-content">%s</div>`, s.content))
+	b.WriteString(fmt.Sprintf(`<div class="block-title">%s</div>`, html.EscapeString(s.Title)))
+	if s.Content != "" {
+		b.WriteString(fmt.Sprintf(`<div class="block-content">%s</div>`, html.EscapeString(s.Content)))
 	}
 	b.WriteString(`</div>`)
 	return b.String()
@@ -269,14 +74,14 @@ func renderHeadingHTML(s reportSection) string {
 
 func ExportHTML(data ReportData) (string, error) {
 	raw := StripANSI(data.AISummary)
-	sections := parseReportSections(raw)
+	sections := report.Parse(raw)
 
 	timestamp := data.Timestamp.Format("2006-01-02 15:04:05 UTC")
 	targetEsc := html.EscapeString(data.Target)
 
 	var body strings.Builder
 	for _, s := range sections {
-		switch s.kind {
+		switch s.Kind {
 		case "finding":
 			body.WriteString(renderFindingHTML(s))
 		case "action":
@@ -291,7 +96,7 @@ func ExportHTML(data ReportData) (string, error) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SERAHKAN Security Report - %s</title>
+<title>SERAHKAN CLI - Security Report - %s</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -324,7 +129,7 @@ body{background:var(--bg-primary);color:var(--text-primary);font-family:'Inter',
 /* Header */
 .header{text-align:center;padding:56px 32px 48px;margin-bottom:40px;border-bottom:1px solid var(--border-color);position:relative;overflow:hidden}
 .header::before{content:'';position:absolute;top:0;left:50%%;transform:translateX(-50%%);width:400px;height:400px;background:radial-gradient(circle,rgba(34,197,94,0.08) 0%%,transparent 70%%);pointer-events:none}
-.header .logo{font-size:3em;font-weight:800;letter-spacing:16px;margin-bottom:12px;position:relative;display:inline-block;background:linear-gradient(135deg,var(--accent-green) 0%%,#4ade80 50%%,var(--accent-green) 100%%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.header .logo{font-size:2.4em;font-weight:800;letter-spacing:2px;margin-bottom:12px;position:relative;display:inline-block;background:linear-gradient(135deg,var(--accent-green) 0%%,#4ade80 50%%,var(--accent-green) 100%%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .header .tagline{color:var(--text-muted);font-size:0.82em;letter-spacing:4px;text-transform:uppercase;font-weight:500}
 .header .version{display:inline-block;margin-top:12px;padding:4px 12px;background:var(--accent-green-dim);color:var(--accent-green);border-radius:20px;font-size:0.72em;font-weight:600;letter-spacing:1px;text-transform:uppercase}
 
@@ -398,7 +203,7 @@ body{background:var(--bg-primary);color:var(--text-primary);font-family:'Inter',
 <body>
 <div class="container">
 <div class="header">
-<div class="logo">SERAHKAN</div>
+<div class="logo">SERAHKAN CLI</div>
 <div class="tagline">AI-Powered Security Analysis Report</div>
 <div class="version">CLI %s</div>
 </div>
@@ -422,7 +227,7 @@ body{background:var(--bg-primary);color:var(--text-primary);font-family:'Inter',
 </div>
 %s
 <div class="footer">
-<p class="brand"><span>SERAHKAN</span> CLI Security Report</p>
+<p class="brand">SERAHKAN CLI security report</p>
 <p>&mdash; %s &mdash;</p>
 </div>
 </div>

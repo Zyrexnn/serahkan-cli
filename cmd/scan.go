@@ -309,12 +309,11 @@ var scanCmd = &cobra.Command{
 		aiUsed := false
 		aiStatus := "not_used"
 		aiError := ""
-		streamed := false
 
 		if scanOptions.skipAI {
 			fmt.Fprintf(logOut, "%s skipped by configuration\n", style.TagAI)
 		} else {
-			fmt.Fprintf(logOut, "%s analyzing %s finding(s)\n", style.TagAI, style.Bold(fmt.Sprintf("%d", len(findings))))
+			stopAISpinner := startAISpinner(logOut, len(findings))
 
 			aiConfig := ai.DefaultConfig()
 			if scanOptions.aiEndpoint != "" {
@@ -333,6 +332,7 @@ var scanCmd = &cobra.Command{
 			if scanOptions.output == "json" {
 				var aiErr error
 				analysis, aiErr = ai.SendToLocalAI(cmd.Context(), summary, aiConfig)
+				stopAISpinner()
 				aiUsed = true
 				aiStatus = "ok"
 				if aiErr != nil {
@@ -340,43 +340,10 @@ var scanCmd = &cobra.Command{
 					aiStatus = "unavailable"
 					aiError = aiErr.Error()
 				}
-				if exportBuf != nil && analysis != "" {
-					fmt.Fprintln(exportBuf)
-					fmt.Fprintln(exportBuf, analysis)
-				}
 			} else {
-				streamed = true
-				if exportBuf != nil {
-					fmt.Fprintln(exportBuf)
-				}
-				style.PrintAIReportHeader(actualOut)
-				var lineBuf strings.Builder
 				var aiErr error
-				analysis, aiErr = ai.StreamToLocalAI(cmd.Context(), summary, aiConfig, func(token string) {
-					lineBuf.WriteString(token)
-					for {
-						raw := lineBuf.String()
-						idx := strings.Index(raw, "\n")
-						if idx < 0 {
-							break
-						}
-						line := raw[:idx]
-						lineBuf.Reset()
-						lineBuf.WriteString(raw[idx+1:])
-						style.PrintAIReportLine(actualOut, line)
-						if exportBuf != nil {
-							fmt.Fprintln(exportBuf, line)
-						}
-					}
-				})
-				remaining := strings.TrimSpace(lineBuf.String())
-				if remaining != "" {
-					style.PrintAIReportLine(actualOut, remaining)
-					if exportBuf != nil {
-						fmt.Fprintln(exportBuf, remaining)
-					}
-				}
-				style.PrintAIReportFooter(actualOut)
+				analysis, aiErr = ai.SendToLocalAI(cmd.Context(), summary, aiConfig)
+				stopAISpinner()
 				aiUsed = true
 				aiStatus = "ok"
 				if aiErr != nil {
@@ -385,24 +352,36 @@ var scanCmd = &cobra.Command{
 					aiError = aiErr.Error()
 				}
 			}
+			if exportBuf != nil && analysis != "" {
+				fmt.Fprintln(exportBuf)
+				fmt.Fprintln(exportBuf, analysis)
+			}
 		}
 
-		validatedReport := validateAndFallbackAIOutput(analysis, findings)
-		if aiError != "" && len(findings) > 0 {
-			aiStatus = "fallback"
-		} else if aiUsed && strings.TrimSpace(analysis) != "" && strings.TrimSpace(validatedReport) != strings.TrimSpace(analysis) {
-			aiStatus = "fallback"
-		}
+		var validatedReport string
 
-		if scanOptions.output == "json" {
-			return emitJSONReport(out, targetLabel, allowedSeverities, findings, strings.TrimSpace(validatedReport), aiUsed, aiStatus, aiError, time.Since(startedAt), scanResult, diagnostics)
-		}
-
-		style.PrintScanSummary(actualOut, targetLabel, len(findings), aiUsed, aiStatus, formatDuration(time.Since(startedAt)))
-		if aiError != "" {
-			fmt.Fprintf(actualOut, "  %s  %s\n", style.Yellow.Sprint("AI Error:"), style.Warn(aiError))
-		}
-		if !streamed {
+		if scanOptions.skipAI {
+			if scanOptions.output == "json" {
+				return emitJSONReport(out, targetLabel, allowedSeverities, findings, "", aiUsed, aiStatus, "", time.Since(startedAt), scanResult, diagnostics)
+			}
+			style.PrintScanSummary(actualOut, targetLabel, len(findings), aiUsed, aiStatus, formatDuration(time.Since(startedAt)))
+			enc := json.NewEncoder(actualOut)
+			enc.SetIndent("", "  ")
+			enc.Encode(findings)
+		} else {
+			validatedReport = validateAndFallbackAIOutput(analysis, findings)
+			if aiError != "" && len(findings) > 0 {
+				aiStatus = "fallback"
+			} else if aiUsed && strings.TrimSpace(analysis) != "" && strings.TrimSpace(validatedReport) != strings.TrimSpace(analysis) {
+				aiStatus = "fallback"
+			}
+			if scanOptions.output == "json" {
+				return emitJSONReport(out, targetLabel, allowedSeverities, findings, strings.TrimSpace(validatedReport), aiUsed, aiStatus, aiError, time.Since(startedAt), scanResult, diagnostics)
+			}
+			style.PrintScanSummary(actualOut, targetLabel, len(findings), aiUsed, aiStatus, formatDuration(time.Since(startedAt)))
+			if aiError != "" {
+				fmt.Fprintf(actualOut, "  %s  %s\n", style.Yellow.Sprint("AI Error:"), style.Warn(aiError))
+			}
 			style.PrintAIReport(actualOut, strings.TrimSpace(validatedReport))
 		}
 
@@ -962,6 +941,39 @@ func startScanTicker(out io.Writer, target string) func() {
 				elapsed += 10
 				fmt.Fprintf(out, "%s active=%s target=%s\n", style.TagScan, style.Metric(fmt.Sprintf("%ds", elapsed)), style.Target(target))
 			case <-done:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+		<-finished
+	}
+}
+
+func startAISpinner(out io.Writer, findingCount int) func() {
+	if out == nil {
+		return func() {}
+	}
+
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	label := fmt.Sprintf("%s analyzing %s finding(s)", style.TagAI, style.Bold(fmt.Sprintf("%d", findingCount)))
+	frames := []string{"|", "/", "-", "\\"}
+
+	go func() {
+		defer close(finished)
+		idx := 0
+		ticker := time.NewTicker(400 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			fmt.Fprintf(out, "\r%s %s", label, style.Dim(frames[idx%len(frames)]))
+			idx++
+			select {
+			case <-ticker.C:
+			case <-done:
+				fmt.Fprintf(out, "\r%s done\n", label)
 				return
 			}
 		}
