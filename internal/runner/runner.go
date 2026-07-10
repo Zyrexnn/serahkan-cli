@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -137,6 +138,31 @@ func promptForceScan(logWriter io.Writer) bool {
 	return input == "y" || input == "yes"
 }
 
+func validateProxy(proxy string) error {
+	if proxy == "" {
+		return nil
+	}
+
+	hostPort := proxy
+	for _, prefix := range []string{"http://", "https://", "socks5://", "socks5h://"} {
+		if strings.HasPrefix(strings.ToLower(hostPort), prefix) {
+			hostPort = hostPort[len(prefix):]
+			break
+		}
+	}
+
+	if idx := strings.Index(hostPort, "/"); idx >= 0 {
+		hostPort = hostPort[:idx]
+	}
+
+	conn, err := net.DialTimeout("tcp", hostPort, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("proxy %q unreachable: %w", proxy, err)
+	}
+	conn.Close()
+	return nil
+}
+
 func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []string, options Options) (Result, error) {
 	nucleiPath, err := ResolveNucleiPath()
 	if err != nil {
@@ -153,6 +179,12 @@ func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []s
 
 	if options.LogWriter == nil {
 		options.LogWriter = io.Discard
+	}
+
+	if proxy := strings.TrimSpace(options.Proxy); proxy != "" {
+		if err := validateProxy(proxy); err != nil {
+			return Result{}, err
+		}
 	}
 
 	nucleiArgs := buildStealthArgs(nucleiPath, target, allowedSeverities, options)
@@ -225,6 +257,14 @@ func RunNucleiDetailed(ctx context.Context, target string, allowedSeverities []s
 					message = "nuclei returned non-JSON output"
 				}
 				return Result{}, fmt.Errorf("nuclei execution failed with exit code %d: %s", exitErr.ExitCode(), message)
+			}
+
+			if len(parseResult.Findings) == 0 {
+				message := strings.TrimSpace(stderr.String())
+				if message == "" {
+					message = fmt.Sprintf("nuclei exited with code %d and produced no findings", exitErr.ExitCode())
+				}
+				return Result{}, fmt.Errorf("nuclei execution failed (exit %d): %s", exitErr.ExitCode(), message)
 			}
 
 			if options.Verbose {

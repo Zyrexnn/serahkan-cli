@@ -769,3 +769,39 @@ func TestCheckWAFBlockHandlesContextCancellation(t *testing.T) {
 		t.Fatalf("expected nil error for cancelled context (connection refused), got: %v", err)
 	}
 }
+
+func TestValidateProxyEmpty(t *testing.T) {
+	if err := validateProxy(""); err != nil {
+		t.Fatalf("expected nil for empty proxy, got: %v", err)
+	}
+}
+
+func TestValidateProxyUnreachable(t *testing.T) {
+	err := validateProxy("http://127.0.0.1:1")
+	if err == nil {
+		t.Fatal("expected error for unreachable proxy, got nil")
+	}
+	if !strings.Contains(err.Error(), "proxy") || !strings.Contains(err.Error(), "unreachable") {
+		t.Fatalf("expected error to mention proxy and unreachable, got: %v", err)
+	}
+}
+
+func TestValidateProxySocks5(t *testing.T) {
+	err := validateProxy("socks5://127.0.0.1:1")
+	if err == nil {
+		t.Fatal("expected error for unreachable socks5 proxy, got nil")
+	}
+	if !strings.Contains(err.Error(), "unreachable") {
+		t.Fatalf("expected unreachable error for socks5, got: %v", err)
+	}
+}
+
+func TestValidateProxyWithPath(t *testing.T) {
+	err := validateProxy("http://127.0.0.1:1/some/path")
+	if err == nil {
+		t.Fatal("expected error for unreachable proxy with path, got nil")
+	}
+	if !strings.Contains(err.Error(), "unreachable") {
+		t.Fatalf("expected unreachable error, got: %v", err)
+	}
+}
