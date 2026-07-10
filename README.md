@@ -21,17 +21,17 @@
 
 ## Demo
 
-### Laporan AI Defensive Analysis
+### AI Defensive Analysis Report
 
-Analisis otomatis dengan AI yang menghasilkan laporan terstruktur berisi root cause analysis, vulnerability audit, dan remediation playbook:
+Automated AI analysis that produces a structured report containing root cause analysis, vulnerability audit, and remediation playbook:
 
-![Laporan AI](aset-gambar/hasil%20laporan%20dengan%20ai.png)
+![AI Report](aset-gambar/hasil%20laporan%20dengan%20ai.png)
 
-### Output JSON Mentah (--skip-ai)
+### Raw JSON Output (--skip-ai)
 
-Ketika AI tidak aktif, serahkan CLI menampilkan findings dalam format JSON mentah yang siap di-parse atau dipipeline:
+When AI is disabled, serahkan CLI displays findings in raw JSON format ready for parsing or piping to other tools:
 
-![Output JSON](aset-gambar/hasil%20laporan%20output%20json.png)
+![JSON Output](aset-gambar/hasil%20laporan%20output%20json.png)
 
 ---
 
@@ -361,7 +361,7 @@ The prompt is tuned to avoid common local-LLM failure modes:
 
 If the model output doesn't match the expected structure, a deterministic fallback report is generated from the parsed findings (so you always get something usable).
 
-![Laporan AI](aset-gambar/hasil%20laporan%20dengan%20ai.png)
+![AI Report](aset-gambar/hasil%20laporan%20dengan%20ai.png)
 
 ---
 
