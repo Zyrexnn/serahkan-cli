@@ -41,7 +41,7 @@ Nuclei is powerful but raw. `serahkan-cli` wraps it so you can:
 
 - **Scan in one command** with opinionated, battle-tested profiles (`fast` → `brutal-aggressive`, plus `web-full`, `web-auth`, and `stealth`).
 - **Stay under the radar** — the `stealth` profile uses a low rate-limit and concurrency with behavioral jitter and automatic HTML export, ideal for anti-blocking low-and-slow scans.
-- **Route through a proxy** — a single `--proxy` flag forwards all traffic (Nuclei + Katana crawler) through HTTP/SOCKS5.
+- **Route through a proxy (or a pool)** — `--proxy` is repeatable: pass several HTTP/SOCKS5 proxies and `serahkan-cli` validates each, forwards all traffic (Nuclei + Katana crawler) through them, and **rotates** to the next proxy automatically on connection failure or WAF block.
 - **Authenticate before scanning** — submit a login form automatically and scan the authenticated surface, not just the login page.
 - **Bypass / tolerate WAFs** — built-in stealth headers, randomized user agents, behavioral rate-limit jitter, and a crawler pre-check that warns instead of aborting on CDN headers.
 - **Get a real remediation report** — findings are deduplicated and sent to your local LLM, which returns a structured ASCII defensive analysis (root cause + PoC + hardening playbook).
@@ -253,7 +253,9 @@ Getting rate-limited or WAF-blocked? Combine these:
 | Technique | How |
 |---|---|
 | **Slow down** | `--profile stealth` (5 rps / concurrency 10) or `--rate-limit 5 --concurrency 10`. |
-| **Rotate identity** | `--proxy http://127.0.0.1:8080` + `--header "User-Agent: ..."`. |
+| **Rotate identity** | Repeat `--proxy` for a pool: `serahkan` validates each proxy, routes all traffic through them, and rotates to the next one on failure or WAF block. Pair with `--header "User-Agent: ..."` to also mask the UA. |
+| **TLS impersonation** | The crawler and login client present a real Chrome TLS fingerprint (uTLS `HelloChrome_Auto`), and Nuclei receives `-tls-impersonate` when the installed binary supports it — blends in with legitimate browser traffic. |
+| **Behavioral jitter** | The `stealth` profile automatically enables randomized inter-request delay (`EnableJitter`) so traffic never looks perfectly periodic. |
 | **Respect WAF** | `--waf-strict` aborts the crawl scan when a real block pattern is detected (avoids IP bans). |
 | **Auto report** | `stealth` exports an HTML report automatically; otherwise `--export html`. |
 
@@ -261,9 +263,10 @@ Getting rate-limited or WAF-blocked? Combine these:
 # Single target, low-and-slow, auto HTML export
 serahkan scan -t https://target.com --profile stealth
 
-# Maximum discretion: stealth + proxy + abort on WAF block
+# Maximum discretion: stealth + proxy pool + abort on WAF block
 serahkan scan -t https://target.com --profile stealth \
-  --proxy http://127.0.0.1:8080 --waf-strict \
+  --proxy http://127.0.0.1:8080 --proxy http://127.0.0.1:8081 --proxy http://127.0.0.1:8082 \
+  --waf-strict \
   --header "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
 ```
 
@@ -478,7 +481,7 @@ serahkan scan -t https://example.com --output json > report.json
 | `--max-duration` | `120` | Nuclei phase cap (seconds). `0` disables. |
 | `--timeout` | `10` | Per-request timeout (seconds). |
 | `--retries` | `0` | Connection retries. |
-| `--proxy` | — | HTTP/SOCKS5 proxy for all requests (e.g. `http://127.0.0.1:8080`). |
+| `--proxy` | — | HTTP/SOCKS5 proxy for all requests. **Repeatable** for a pool — e.g. `--proxy http://p1:8080 --proxy http://p2:8080`. Unreachable proxies are skipped and the scanner rotates on failure/WAF block. |
 | `--interactsh` | `false` | Enable out-of-band interaction templates. |
 | `--skip-ai` | `false` | Skip AI analysis, dump raw findings JSON to terminal. |
 | `--ai-endpoint` | config | Override AI endpoint. |

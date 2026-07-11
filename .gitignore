@@ -12,6 +12,9 @@ config.yaml
 target.txt
 targets.txt
 
+# Build artifacts
+build.log
+
 # OpenCode internal tooling
 .opencode/
 
