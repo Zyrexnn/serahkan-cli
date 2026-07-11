@@ -707,7 +707,7 @@ func TestCheckWAFBlockAllowsCloudflareCDN(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := checkWAFBlock(context.Background(), server.URL, nil)
+	err := checkWAFBlock(context.Background(), server.URL, "", nil)
 	if err != nil {
 		t.Fatalf("expected nil error for Cloudflare CDN header, got: %v", err)
 	}
@@ -735,7 +735,7 @@ func TestCheckWAFBlockDetectsPatterns(t *testing.T) {
 			}))
 			defer server.Close()
 
-			err := checkWAFBlock(context.Background(), server.URL, nil)
+			err := checkWAFBlock(context.Background(), server.URL, "", nil)
 			if err == nil {
 				t.Fatalf("expected error for pattern %q, got nil", tt.name)
 			}
@@ -754,7 +754,7 @@ func TestCheckWAFBlockNoDetectionOnCleanResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := checkWAFBlock(context.Background(), server.URL, nil)
+	err := checkWAFBlock(context.Background(), server.URL, "", nil)
 	if err != nil {
 		t.Fatalf("expected nil error for clean response, got: %v", err)
 	}
@@ -764,7 +764,7 @@ func TestCheckWAFBlockHandlesContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := checkWAFBlock(ctx, "http://127.0.0.1:1", nil)
+	err := checkWAFBlock(ctx, "http://127.0.0.1:1", "", nil)
 	if err != nil {
 		t.Fatalf("expected nil error for cancelled context (connection refused), got: %v", err)
 	}

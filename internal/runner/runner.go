@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,8 @@ type Options struct {
 	SkipWAFCheck      bool
 	StrictWAFCheck    bool
 	Proxy             string
+	Proxies           []string
+	EnableJitter      bool
 }
 
 type Result struct {
@@ -84,17 +87,65 @@ func RunNucleiScan(ctx context.Context, target string, allowedSeverities []strin
 		options.LogWriter = io.Discard
 	}
 
-	if !options.EnableCrawl || options.TargetsFile != "" {
-		return RunNucleiDetailed(ctx, target, allowedSeverities, options)
+	// Build alive proxy list
+	proxies := options.Proxies
+	if len(proxies) == 0 {
+		proxies = []string{""}
+	}
+	var alive []string
+	for _, p := range proxies {
+		if p == "" {
+			alive = append(alive, "")
+			continue
+		}
+		if err := validateProxy(p); err != nil {
+			fmt.Fprintf(options.LogWriter, "[PROXY] proxy %s unreachable (%v), skipping\n", p, err)
+			continue
+		}
+		alive = append(alive, p)
+	}
+	fmt.Fprintf(options.LogWriter, "[PROXY] %d proxy(s) available\n", len(alive))
+
+	var lastResult Result
+	for i, proxy := range alive {
+		options.Proxy = proxy
+		if proxy != "" {
+			fmt.Fprintf(options.LogWriter, "[PROXY] using proxy #%d: %s\n", i+1, proxy)
+		}
+
+		result, err := runScanRound(ctx, target, allowedSeverities, options)
+		if err != nil {
+			fmt.Fprintf(options.LogWriter, "[PROXY] proxy #%d error: %v\n", i+1, err)
+			if i+1 < len(alive) {
+				continue
+			}
+			return Result{}, err
+		}
+		lastResult = result
+
+		if result.WAFBlocked > 0 && len(result.Findings) == 0 && i+1 < len(alive) {
+			fmt.Fprintf(options.LogWriter, "[PROXY] proxy #%d blocked (%d WAF-filtered, 0 findings), rotating to #%d\n", i+1, result.WAFBlocked, i+2)
+			continue
+		}
+		return result, nil
 	}
 
+	fmt.Fprintf(options.LogWriter, "[PROXY] all %d proxies exhausted, 0 findings\n", len(alive))
+	return lastResult, nil
+}
+
+func runScanRound(ctx context.Context, target string, allowedSeverities []string, options Options) (Result, error) {
 	if !options.SkipWAFCheck {
-		if wafErr := checkWAFBlock(ctx, target, options.LogWriter); wafErr != nil {
+		if wafErr := checkWAFBlock(ctx, target, options.Proxy, options.LogWriter); wafErr != nil {
 			if options.StrictWAFCheck {
 				return Result{}, wafErr
 			}
 			fmt.Fprintf(options.LogWriter, "[WARN] WAF/security precheck warning: %v; continuing scan\n", wafErr)
 		}
+	}
+
+	if !options.EnableCrawl || options.TargetsFile != "" {
+		return RunNucleiDetailed(ctx, target, allowedSeverities, options)
 	}
 
 	crawlResult, crawlErr := CrawlTarget(ctx, target, options.Concurrency, 2, options.LogWriter, options)
@@ -576,7 +627,7 @@ var wafBlockPatterns = []string{
 
 var wafVendorHeaders = []string{"cloudflare", "imperva", "incapsula", "akamai", "waf"}
 
-func checkWAFBlock(ctx context.Context, target string, logWriter io.Writer) error {
+func checkWAFBlock(ctx context.Context, target, proxy string, logWriter io.Writer) error {
 	if logWriter == nil {
 		logWriter = io.Discard
 	}
@@ -593,7 +644,22 @@ func checkWAFBlock(ctx context.Context, target string, logWriter io.Writer) erro
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
-	resp, err := http.DefaultClient.Do(req)
+	var client *http.Client
+	if proxy != "" {
+		proxyURL, err := url.Parse(proxy)
+		if err == nil {
+			client = &http.Client{
+				Transport: &http.Transport{
+					Proxy: http.ProxyURL(proxyURL),
+				},
+			}
+		}
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil
 	}

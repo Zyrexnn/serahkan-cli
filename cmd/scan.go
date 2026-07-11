@@ -66,7 +66,7 @@ var scanOptions struct {
 	loginDataFile     string
 	loginThreshold    int
 	loginCookies      string
-	proxy             string
+	proxies           []string
 }
 
 var severityRank = map[string]int{
@@ -231,7 +231,7 @@ var scanCmd = &cobra.Command{
 			TargetsFile:       scanOptions.targetFile,
 			SkipWAFCheck:      scanOptions.wafSkip,
 			StrictWAFCheck:    scanOptions.wafStrict,
-			Proxy:             scanOptions.proxy,
+			Proxies:           scanOptions.proxies,
 		}
 		if scanOptions.brutalAggressive {
 			if scanOptions.concurrency == 0 {
@@ -240,6 +240,10 @@ var scanCmd = &cobra.Command{
 			if scanOptions.rateLimit == 0 {
 				runOptions.RateLimit = 800
 			}
+		}
+
+		if strings.EqualFold(scanOptions.profile, "stealth") {
+			runOptions.EnableJitter = true
 		}
 
 		scanCtx := cmd.Context()
@@ -458,7 +462,7 @@ func init() {
 	scanCmd.Flags().StringVar(&scanOptions.output, "output", "text", "Output format: text or json")
 	scanCmd.Flags().StringVar(&scanOptions.export, "export", "", "Export report to file: html or markdown")
 	scanCmd.Flags().BoolVar(&scanOptions.crawl, "crawl", false, "Enable Katana crawler to discover additional sub-pages before scanning")
-	scanCmd.Flags().StringVar(&scanOptions.proxy, "proxy", "", "HTTP / SOCKS5 proxy for all requests (e.g. http://127.0.0.1:8080)")
+	scanCmd.Flags().StringArrayVar(&scanOptions.proxies, "proxy", nil, "HTTP / SOCKS5 proxy for all requests (repeatable, e.g. --proxy http://p1:8080 --proxy http://p2:8080)")
 	scanCmd.Flags().BoolVar(&scanOptions.wafSkip, "waf-skip", false, "Skip crawl pre-flight WAF/CDN check")
 	scanCmd.Flags().BoolVar(&scanOptions.wafStrict, "waf-strict", false, "Abort crawl scans when WAF/security block patterns are detected")
 

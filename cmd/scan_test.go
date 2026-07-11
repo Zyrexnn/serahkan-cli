@@ -413,7 +413,7 @@ func zeroScanOptions() struct {
 	loginDataFile     string
 	loginThreshold    int
 	loginCookies      string
-	proxy             string
+	proxies           []string
 } {
 	return struct {
 		target            string
@@ -461,7 +461,7 @@ func zeroScanOptions() struct {
 		loginDataFile     string
 		loginThreshold    int
 		loginCookies      string
-		proxy             string
+		proxies           []string
 	}{}
 }
 

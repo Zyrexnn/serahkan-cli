@@ -75,15 +75,11 @@ func isAggressiveProfile(options *Options) bool {
 func buildStealthArgs(nucleiPath, target string, allowedSeverities []string, options Options) []string {
 	applyStealthHeaders(&options)
 
-	if isAggressiveProfile(&options) {
+	if options.EnableJitter || isAggressiveProfile(&options) {
 		applyAggressiveJitter(&options)
 	}
 
 	args := buildNucleiArgs(nucleiPath, target, allowedSeverities, options)
-
-	if isAggressiveProfile(&options) {
-		// ponytail: keep jitter at the numeric flag layer only; add debug-only delay metadata later if a traced command view is introduced.
-	}
 
 	return args
 }
