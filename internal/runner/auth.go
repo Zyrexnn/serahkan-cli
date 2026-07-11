@@ -4,16 +4,46 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	utls "github.com/refraction-networking/utls"
 )
 
 type LoginResult struct {
 	Cookies    string
 	Success    bool
 	StatusCode int
+}
+
+const chromeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+func utlsHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host := addr
+				if h, _, err := net.SplitHostPort(addr); err == nil {
+					host = h
+				}
+				dialer := &net.Dialer{Timeout: 30 * time.Second}
+				rawConn, err := dialer.DialContext(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				uconn := utls.UClient(rawConn, &utls.Config{ServerName: host}, utls.HelloChrome_Auto)
+				if err := uconn.HandshakeContext(ctx); err != nil {
+					rawConn.Close()
+					return nil, err
+				}
+				return uconn, nil
+			},
+		},
+	}
 }
 
 func AttemptLogin(ctx context.Context, loginURL, loginData string, threshold int, logWriter io.Writer) (LoginResult, error) {
@@ -47,16 +77,14 @@ func AttemptLogin(ctx context.Context, loginURL, loginData string, threshold int
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("User-Agent", randomUserAgent())
+	req.Header.Set("User-Agent", chromeUserAgent)
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("too many redirects")
-			}
-			return nil
-		},
+	client := utlsHTTPClient()
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return fmt.Errorf("too many redirects")
+		}
+		return nil
 	}
 
 	resp, err := client.Do(req)
@@ -112,9 +140,9 @@ func DetectLoginFormAction(ctx context.Context, pageURL string) (string, error) 
 	}
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("User-Agent", randomUserAgent())
+	req.Header.Set("User-Agent", chromeUserAgent)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := utlsHTTPClient().Do(req)
 	if err != nil {
 		return "", err
 	}

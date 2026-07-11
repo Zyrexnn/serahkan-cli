@@ -366,6 +366,10 @@ func buildNucleiArgs(nucleiPath, target string, allowedSeverities []string, opti
 		args = append(args, "-random-agent")
 	}
 
+	if supportsNucleiFlag(nucleiPath, "-tls-impersonate") {
+		args = append(args, "-tls-impersonate")
+	}
+
 	if options.NoInteractsh {
 		args = append(args, "-ni")
 	}
